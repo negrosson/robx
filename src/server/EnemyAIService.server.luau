@@ -427,11 +427,15 @@ local function spawnTestWave()
 	EnemyAIService_Spawn("kuroshio_v", Vector3.new(100, 30, 0), 0.3)
 end
 
--- Spawn inicial tras 10 segundos de carga del servidor
+-- NOTA: Spawn de prueba automático desactivado para evitar ataques no solicitados
+-- mientras el jugador está aprendiendo o realizando entregas estándar.
+-- Usar _G.EnemyAIService.SpawnTestWave() o _G.EnemyAIService.Spawn(...) bajo demanda.
+--[[
 task.delay(10, function()
 	spawnTestWave()
 	print("[EnemyAIService] Oleada de prueba inicial generada.")
 end)
+]]
 
 -- Exponer API global para uso desde Main.server.luau
 _G.EnemyAIService = {

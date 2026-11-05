@@ -11,6 +11,7 @@ NetworkEvents.Names = {
 	DroneFlightState   = "DroneFlightState",
 	ClaimDelivery      = "DeliveryCompleted",  -- Petición de entrega del cliente
 	DeliveryConfirmed  = "DeliveryConfirmed",  -- Confirmación validada por servidor
+	DeliveryRejected   = "DeliveryRejected",   -- Notificación de rechazo con motivo
 	DroneDestroyed     = "DroneDestroyed",
 	OnFireWeapon       = "OnFireWeapon",
 	OnDamageTaken      = "OnDamageTaken",
