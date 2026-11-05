@@ -225,5 +225,41 @@ El peso de los paquetes afecta la simulación dinámica en tiempo real:
 - **Detonación por Energía Cinética:** El sistema evalúa el impacto cinético ($E_k = \frac{1}{2} M_{\text{total}} \|\vec{v}\|^2$). Si una carga clasificada como inestable choca a alta velocidad superando el umbral de 4,000 Joules, se genera una detonación física con `Explosion` que destruye el contenedor y desestabiliza el dron.
 
 ---
+
+## 10. Optimización de Helipuertos y Sistema de Desenganche Físico de Entrega con Tecla [G]
+
+### 🏷️ 1. Simplificación de Nombres de Helipuertos y Señalética Holográfica
+Para evitar confusión con lore cyberpunk en esta fase de desarrollo y ofrecer máxima claridad operativa en el mapa y la interfaz:
+* **Pad_Base** (Posición: `0, 4, 0`): Helipuerto central de operaciones y recarga con rampa de acceso. Letrero holográfico 3D: `BASE`.
+* **Pad_TorreA** (Posición: `160, 95, -180`, Altura: 95 studs): Rascacielos principal en neón magenta con antena de comunicaciones. Letrero holográfico 3D: `TORRE A`.
+* **Pad_TorreB** (Posición: `-200, 50, 140`, Altura: 50 studs): Rascacielos intermedio en neón dorado. Letrero holográfico 3D: `TORRE B`.
+
+Se sincronizaron de forma homogénea las definiciones en `Main.server.luau`, `DeliveryManager.luau` y `DroneHUD.luau`.
+
+### 📦 2. Diagnóstico y Corrección Integral de la Tecla [G] y la Entrega de Carga
+**Causa Raíz de que «la tecla G no dejaba el paquete»:**
+1. **Falta de Desacople Físico Real:** En versiones previas, `DroneCargo.DeliverAndReload()` creaba un clon estático anclado en el helipuerto pero **nunca destruía el `WeldConstraint`** ni modificaba `self.cargoBox`. Por tanto, el jugador seguía viendo la caja pegada a la panza del dron en todo momento, dando la impresión de que presionar `[G]` no tenía ningún efecto.
+2. **Tolerancias de Zona Excesivamente Rígidas:** El radio horizontal estaba fijado en 22 studs y la altura máxima en 12 studs. En helipuertos de 32 a 36 studs de ancho, si el dron sobrevolaba a 14 studs de altitud o cerca del borde exterior de la plataforma, `CheckPadZone` retornaba `false` y cancelaba la entrega sin retroalimentación visual clara.
+3. **Falta de Feedback en Caso Fuera de Zona:** Si el usuario presionaba `[G]` en vuelo o en la base, no recibía un mensaje explicativo visible en pantalla.
+
+**Solución Implementada:**
+1. **Desenganche Dinámico por Gravedad:**
+   * Al validarse la entrega, `self.weld:Destroy()` destruye de inmediato la unión física.
+   * `self.cargoBox` activa colisión (`CanCollide = true`), desactiva massless (`Massless = false`) y se desancla (`Anchored = false`).
+   * Se transfiere la velocidad lineal y angular del dron más un vector de descenso (`Vector3.new(0, -6, 0)`), haciendo que la caja caiga por gravedad real y ruede/se asiente sobre el helipuerto.
+   * El haz tractor magnético se apaga temporalmente y suena un pitido de liberación magnética (`rbxassetid://9114223170`).
+   * La caja liberada pasa a `Workspace` y se limpia tras 25 segundos con `Debris`.
+2. **Recarga Asíncrona de Nuevo Pedido:**
+   * Tras 1.5 segundos de soltar la carga, `ReloadFreshCargo()` genera automáticamente un nuevo contenedor sellado bajo el dron, restablece el `WeldConstraint`, reactiva el haz tractor magnético holográfico y asigna el siguiente destino de reparto.
+3. **Ampliación de Tolerancias de Detección:**
+   * Radio horizontal ampliado a **30 studs** (cubre todo el helipuerto y su borde con holgura).
+   * Rango de altitud vertical ampliado de **-4 a +25 studs** (permite planear cómodamente sobre la plataforma sin peligro de colisión).
+   * Velocidad máxima autorizada ampliada a **35–40 studs/s** para permitir entregas dinámicas al vuelo.
+4. **Retroalimentación en Tiempo Real en HUD:**
+   * Si el jugador pulsa `[G]` fuera de zona, el HUD muestra en rojo: `[G] NO DISPONIBLE: Helipuerto más cercano: Torre A a XX studs`.
+   * Si pulsa `[G]` en la base inicial antes de salir, se le indica: `Ya estás en Base. Vuela hacia Torre A`.
+   * Al entregar exitosamente, se muestra el popup dorado: `¡ENTREGA EXITOSA EN TORRE A! +250 CYBER-CRÉDITOS`.
+
+---
 *Fin del documento de auditoría técnica.*
 

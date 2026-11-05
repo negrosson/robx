@@ -33,11 +33,23 @@ export type ManagerInstance = {
 }
 
 -- Tolerancias de aterrizaje generosas para jugabilidad fluida
-local MAX_HORIZ_DIST = 22     -- studs desde el centro del helipuerto
-local MIN_VERT_DIFF  = -2     -- studs debajo de la superficie del helipuerto
-local MAX_VERT_DIFF  = 12     -- studs sobre la superficie (permite vuelo estacionario bajo)
-local MAX_SAFE_SPEED = 25     -- studs/s velocidad máxima para autorizar entrega
-local TOUCHDOWN_TIME = 0.55   -- segundos continuos necesarios para auto-entrega
+local MAX_HORIZ_DIST = 30     -- studs desde el centro del helipuerto
+local MIN_VERT_DIFF  = -4     -- studs debajo de la superficie del helipuerto
+local MAX_VERT_DIFF  = 22     -- studs sobre la superficie (permite vuelo estacionario cómodo)
+local MAX_SAFE_SPEED = 35     -- studs/s velocidad máxima para autorizar entrega
+local TOUCHDOWN_TIME = 0.60   -- segundos continuos necesarios para auto-entrega
+
+local function getPadDisplayName(padName: string): string
+	if padName == "Pad_Base" then
+		return "Base"
+	elseif padName == "Pad_TorreA" then
+		return "Torre A"
+	elseif padName == "Pad_TorreB" then
+		return "Torre B"
+	else
+		return padName:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", "")
+	end
+end
 
 function DeliveryManager.new(): ManagerInstance
 	local claimEvent = NetworkEvents.Get(NetworkEvents.Names.ClaimDelivery)
@@ -55,7 +67,7 @@ function DeliveryManager.new(): ManagerInstance
 			if child:IsA("Model") then
 				local basePart = child:FindFirstChild("BasePad") :: BasePart?
 				if basePart then
-					local displayName = child.Name:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", "")
+					local displayName = getPadDisplayName(child.Name)
 					table.insert(targets, {
 						name = child.Name,
 						displayName = displayName,
@@ -74,24 +86,24 @@ function DeliveryManager.new(): ManagerInstance
 	-- Fallback por si los pads demoran en replicar
 	if #targets == 0 then
 		table.insert(targets, {
-			name = "Pad_HangarCentral",
-			displayName = "Hangar Central",
+			name = "Pad_Base",
+			displayName = "Base",
 			model = nil,
 			position = Vector3.new(0, 6, 0),
 			basePadPosition = Vector3.new(0, 4, 0),
 			reward = 250,
 		})
 		table.insert(targets, {
-			name = "Pad_TorreArasaka",
-			displayName = "Torre Arasaka",
+			name = "Pad_TorreA",
+			displayName = "Torre A",
 			model = nil,
 			position = Vector3.new(160, 97, -180),
 			basePadPosition = Vector3.new(160, 95, -180),
 			reward = 250,
 		})
 		table.insert(targets, {
-			name = "Pad_DistritoNeon",
-			displayName = "Distrito Neón",
+			name = "Pad_TorreB",
+			displayName = "Torre B",
 			model = nil,
 			position = Vector3.new(-200, 52, 140),
 			basePadPosition = Vector3.new(-200, 50, 140),
@@ -99,10 +111,10 @@ function DeliveryManager.new(): ManagerInstance
 		})
 	end
 
-	-- Buscar Pad_TorreArasaka como destino inicial (el jugador inicia en HangarCentral)
+	-- Buscar Pad_TorreA como destino inicial (el jugador inicia en Base)
 	local startIndex = 1
 	for idx, tgt in ipairs(targets) do
-		if tgt.name == "Pad_TorreArasaka" then
+		if tgt.name == "Pad_TorreA" then
 			startIndex = idx
 			break
 		end
@@ -114,7 +126,7 @@ function DeliveryManager.new(): ManagerInstance
 	local self: ManagerInstance = {
 		targets = targets,
 		currentTargetIndex = startIndex,
-		originPadName = "Pad_HangarCentral",
+		originPadName = "Pad_Base",
 		touchdownTimer = 0,
 		isLanded = false,
 		currentZonePadName = nil,
@@ -140,7 +152,7 @@ function DeliveryManager.new(): ManagerInstance
 		self.originPadName = padName
 
 		-- Buscar nombre visible
-		local displayName = padName:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", "")
+		local displayName = getPadDisplayName(padName)
 		for _, tgt in ipairs(self.targets) do
 			if tgt.name == padName then
 				displayName = tgt.displayName
@@ -183,7 +195,7 @@ function DeliveryManager.RefreshTargets(self: ManagerInstance)
 		if child:IsA("Model") then
 			local basePart = child:FindFirstChild("BasePad") :: BasePart?
 			if basePart then
-				local displayName = child.Name:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", "")
+				local displayName = getPadDisplayName(child.Name)
 				table.insert(newTargets, {
 					name = child.Name,
 					displayName = displayName,
@@ -241,13 +253,23 @@ function DeliveryManager.CheckPadZone(
 ): (boolean, DeliveryTarget?, number, string?)
 	local speed = droneVelocity.Magnitude
 	if speed > MAX_SAFE_SPEED then
-		return false, nil, 0, string.format("Velocidad alta (%.0f studs/s, máx 25). Frena con [X].", speed)
+		return false, nil, 0, string.format("Velocidad alta (%.0f studs/s, máx 35). Frena con [X].", speed)
 	end
 
 	local closestTarget: DeliveryTarget? = nil
 	local closestDist = math.huge
 
-	-- 1. Comprobar si está dentro de la zona de CUALQUIER helipuerto disponible
+	-- 1. Primero comprobar si está sobre su objetivo asignado
+	local currentTgt = self:GetCurrentTarget()
+	if currentTgt then
+		local hDist = Vector3.new(dronePosition.X - currentTgt.basePadPosition.X, 0, dronePosition.Z - currentTgt.basePadPosition.Z).Magnitude
+		local vDiff = dronePosition.Y - currentTgt.basePadPosition.Y
+		if hDist <= MAX_HORIZ_DIST and vDiff >= MIN_VERT_DIFF and vDiff <= MAX_VERT_DIFF then
+			return true, currentTgt, currentTgt.reward, nil
+		end
+	end
+
+	-- 2. Comprobar si está sobre cualquier otro helipuerto de la red
 	for _, tgt in ipairs(self.targets) do
 		local horizDist = Vector3.new(dronePosition.X - tgt.basePadPosition.X, 0, dronePosition.Z - tgt.basePadPosition.Z).Magnitude
 		local vertDiff = dronePosition.Y - tgt.basePadPosition.Y
@@ -258,7 +280,10 @@ function DeliveryManager.CheckPadZone(
 		end
 
 		if horizDist <= MAX_HORIZ_DIST and vertDiff >= MIN_VERT_DIFF and vertDiff <= MAX_VERT_DIFF then
-			-- Helipuerto válido alcanzado!
+			-- Si es el mismo helipuerto de origen de donde recién despegó:
+			if tgt.name == self.originPadName then
+				return false, tgt, 0, string.format("Ya estás en %s. Vuela hacia %s", tgt.displayName, currentTgt and currentTgt.displayName or "tu objetivo")
+			end
 			return true, tgt, tgt.reward, nil
 		end
 	end

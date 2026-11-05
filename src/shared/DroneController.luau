@@ -596,11 +596,10 @@ function DroneController:BindInputs()
 	self:UnbindInputs()
 	print("[DroneController] BindInputs() - WASD/Space/Shift/Q/X/V activos")
 
-	self.inputBeganConn = UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
-		-- gpe = true cuando el chat u otro sistema captura la tecla
-		-- Para WASD durante el vuelo, Roblox puede marcarlos como gpe=true
-		-- (el character controller los procesa). Los ignoramos IGUAL porque
-		-- LockPlayerCharacter() pone WalkSpeed=0.
+	self.inputBeganConn = UserInputService.InputBegan:Connect(function(input: InputObject, _gpe: boolean)
+		local focused = UserInputService:GetFocusedTextBox()
+		if focused then return end
+
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 		local k = input.KeyCode
 
@@ -614,6 +613,13 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = true
 		elseif k == Enum.KeyCode.V          then self.isFPV = not self.isFPV
 		elseif k == Enum.KeyCode.G          then
+			if self.cargo and not self.cargo.isLoaded then
+				if self.hud and (self.hud :: any).ShowHint then
+					pcall(function() (self.hud :: any):ShowHint("RECARGANDO PAQUETE... ESPERA UN SEGUNDO", true) end)
+				end
+				return
+			end
+
 			if self.deliveryManager and (self.deliveryManager :: any).TryManualDeliver then
 				local ok, success, hint = pcall(function()
 					return (self.deliveryManager :: any):TryManualDeliver(self.rootPart.Position, self.currentVelocity)
@@ -626,12 +632,15 @@ function DroneController:BindInputs()
 					else
 						local msg = if typeof(hint) == "string" then hint else "Debes estar sobre un helipuerto"
 						if self.hud and (self.hud :: any).ShowHint then
-							pcall(function() (self.hud :: any):ShowHint("[G] FUERA DE ZONA: " .. msg, true) end)
+							pcall(function() (self.hud :: any):ShowHint("[G] NO DISPONIBLE: " .. msg, true) end)
 						end
 					end
 				end
 			else
 				warn("[DroneController] DeliveryManager no disponible al presionar G")
+				if self.hud and (self.hud :: any).ShowHint then
+					pcall(function() (self.hud :: any):ShowHint("SISTEMA DE ENTREGA NO DISPONIBLE", true) end)
+				end
 			end
 		end
 	end)

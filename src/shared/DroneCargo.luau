@@ -111,24 +111,129 @@ function DroneCargo.new(dronePart: BasePart): CargoInstance
 end
 
 function DroneCargo.DeliverAndReload(self: CargoInstance, dropPosition: Vector3)
-	-- Efecto visual: dejar una copia decorativa en el helipuerto y recargar una nueva carga
-	local deliveredCrate = self.cargoBox:Clone()
-	deliveredCrate.CanCollide = true
-	deliveredCrate.Massless = false
-	deliveredCrate.Anchored = true
-	deliveredCrate.CFrame = CFrame.new(dropPosition + Vector3.new(0, 1.2, 0))
-	deliveredCrate.Parent = workspace
+	if not self.isLoaded then
+		print("[DroneCargo] No hay carga para soltar actualmente (recargando...).")
+		return
+	end
 
-	-- Destruir la caja anterior tras 20 segundos para no saturar memoria
-	game:GetService("Debris"):AddItem(deliveredCrate, 20)
+	self.isLoaded = false
+	print("[DroneCargo] ¡Soltando paquete de entrega físicamente por gravedad!")
 
-	-- Parpadear el haz tractor (simulando recarga de carga)
+	-- 1. Apagar haz tractor magnético
 	for _, beam in ipairs(self.beams) do
 		beam.Enabled = false
-		task.delay(0.6, function()
-			beam.Enabled = true
-		end)
 	end
+
+	-- 2. Desenganchar físicamente el contenedor del dron
+	if self.weld and self.weld.Parent then
+		self.weld:Destroy()
+	end
+
+	-- 3. Habilitar físicas completas en el paquete que cae
+	local droppedBox = self.cargoBox
+	if droppedBox and droppedBox.Parent then
+		droppedBox.Massless = false
+		droppedBox.CanCollide = true
+		droppedBox.Anchored = false
+
+		-- Transferir inercia real del vuelo + impulso hacia el helipuerto
+		local droneVel = self.rootPart.AssemblyLinearVelocity
+		droppedBox.AssemblyLinearVelocity = droneVel + Vector3.new(0, -6, 0)
+		droppedBox.AssemblyAngularVelocity = Vector3.new(math.random(-2, 2), math.random(-2, 2), math.random(-2, 2))
+
+		-- Mover el modelo al Workspace exterior para que caiga libremente
+		if self.cargoModel then
+			self.cargoModel.Parent = workspace
+			game:GetService("Debris"):AddItem(self.cargoModel, 25)
+		end
+	end
+
+	-- 4. Efecto de audio de desacople magnético
+	local releaseSound = Instance.new("Sound")
+	releaseSound.SoundId = "rbxassetid://9114223170"
+	releaseSound.Volume = 0.8
+	releaseSound.Parent = self.rootPart
+	releaseSound:Play()
+	game:GetService("Debris"):AddItem(releaseSound, 2)
+
+	-- 5. Recargar un nuevo paquete fresco tras 1.5 segundos
+	task.delay(1.5, function()
+		if not self.rootPart or not self.rootPart.Parent then return end
+		self:ReloadFreshCargo()
+	end)
+end
+
+function DroneCargo.ReloadFreshCargo(self: CargoInstance)
+	local dronePart = self.rootPart
+
+	local cargoModel = Instance.new("Model")
+	cargoModel.Name = "DroneCargoContainer"
+
+	local cargoBox = Instance.new("Part")
+	cargoBox.Name = "CargoBox"
+	cargoBox.Size = Vector3.new(2.8, 1.8, 2.8)
+	cargoBox.Material = Enum.Material.Metal
+	cargoBox.Color = COLOR_CARGO_BODY
+	cargoBox.CanCollide = false
+	cargoBox.Massless = true
+	cargoBox.CFrame = dronePart.CFrame * CFrame.new(0, -dronePart.Size.Y * 0.7 - 1.2, 0)
+	cargoBox.Parent = cargoModel
+
+	local cargoBand = Instance.new("Part")
+	cargoBand.Name = "NeonBand"
+	cargoBand.Size = Vector3.new(2.9, 0.4, 2.9)
+	cargoBand.Material = Enum.Material.Neon
+	cargoBand.Color = if self.isUnstable then Color3.fromRGB(255, 160, 0) else COLOR_CARGO_NEON
+	cargoBand.CanCollide = false
+	cargoBand.Massless = true
+	cargoBand.CFrame = cargoBox.CFrame
+	cargoBand.Parent = cargoModel
+
+	local bandWeld = Instance.new("WeldConstraint")
+	bandWeld.Part0 = cargoBox
+	bandWeld.Part1 = cargoBand
+	bandWeld.Parent = cargoBox
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = dronePart
+	weld.Part1 = cargoBox
+	weld.Parent = cargoBox
+
+	local attDrone = dronePart:FindFirstChild("TractorAttDrone") :: Attachment?
+	if not attDrone then
+		attDrone = Instance.new("Attachment")
+		attDrone.Name = "TractorAttDrone"
+		attDrone.Position = Vector3.new(0, -dronePart.Size.Y * 0.5, 0)
+		attDrone.Parent = dronePart
+	end
+
+	local attCargo = Instance.new("Attachment")
+	attCargo.Name = "TractorAttCargo"
+	attCargo.Position = Vector3.new(0, cargoBox.Size.Y * 0.5, 0)
+	attCargo.Parent = cargoBox
+
+	table.clear(self.beams)
+	local tractorBeam = Instance.new("Beam")
+	tractorBeam.Name = "TractorBeam"
+	tractorBeam.Attachment0 = attDrone
+	tractorBeam.Attachment1 = attCargo
+	tractorBeam.Color = ColorSequence.new(if self.isUnstable then Color3.fromRGB(255, 160, 0) else COLOR_CARGO_NEON)
+	tractorBeam.Width0 = 0.8
+	tractorBeam.Width1 = 0.3
+	tractorBeam.Transparency = NumberSequence.new(0.35)
+	tractorBeam.LightEmission = 1
+	tractorBeam.FaceCamera = true
+	tractorBeam.Parent = cargoBox
+	table.insert(self.beams, tractorBeam)
+
+	cargoModel.Parent = dronePart
+
+	self.cargoModel = cargoModel
+	self.cargoBox   = cargoBox
+	self.weld       = weld
+	self.isLoaded   = true
+
+	print("[DroneCargo] ¡Nuevo contenedor de mercancía acoplado al dron!")
 end
 
 function DroneCargo.Destroy(self: CargoInstance)

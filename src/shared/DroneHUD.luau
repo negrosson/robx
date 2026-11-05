@@ -337,7 +337,7 @@ function DroneHUD.new(): HUDInstance
 	missionTargetLabel.Position = UDim2.fromOffset(10, 26)
 	missionTargetLabel.BackgroundTransparency = 1
 	missionTargetLabel.Font = Enum.Font.Code
-	missionTargetLabel.Text = "DESTINO: Torre Arasaka"
+	missionTargetLabel.Text = "DESTINO: Torre A"
 	missionTargetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	missionTargetLabel.TextSize = 13
 	missionTargetLabel.TextXAlignment = Enum.TextXAlignment.Left

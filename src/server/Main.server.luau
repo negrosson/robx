@@ -170,9 +170,19 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	signLabel.Size = UDim2.fromScale(1, 1)
 	signLabel.BackgroundTransparency = 1
 	signLabel.Font = Enum.Font.Code
-	signLabel.Text = string.format("◀ %s ▶\n[ZONA DE ATERRIZAJE]", name:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", ""):upper())
+	local signText = "BASE"
+	if name == "Pad_TorreA" then
+		signText = "TORRE A"
+	elseif name == "Pad_TorreB" then
+		signText = "TORRE B"
+	elseif name == "Pad_Base" then
+		signText = "BASE"
+	else
+		signText = name:gsub("Pad_", ""):upper()
+	end
+	signLabel.Text = string.format("◀ %s ▶\n[ZONA DE ATERRIZAJE]", signText)
 	signLabel.TextColor3 = primaryColor
-	signLabel.TextSize = 15
+	signLabel.TextSize = 16
 	signLabel.TextStrokeTransparency = 0.2
 	signLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	signLabel.Parent = billboard
@@ -204,16 +214,16 @@ local function setupHelipads()
 		folder.Parent = Workspace
 	end
 
-	local pad1 = createHelipad("Pad_HangarCentral", Vector3.new(0, 4, 0), Color3.fromRGB(0, 240, 255), true)
+	local pad1 = createHelipad("Pad_Base", Vector3.new(0, 4, 0), Color3.fromRGB(0, 240, 255), true)
 	pad1.Parent = folder
 
-	local pad2 = createHelipad("Pad_TorreArasaka", Vector3.new(160, 95, -180), Color3.fromRGB(255, 30, 120), false)
+	local pad2 = createHelipad("Pad_TorreA", Vector3.new(160, 95, -180), Color3.fromRGB(255, 30, 120), false)
 	pad2.Parent = folder
 
-	local pad3 = createHelipad("Pad_DistritoNeon", Vector3.new(-200, 50, 140), Color3.fromRGB(255, 200, 0), false)
+	local pad3 = createHelipad("Pad_TorreB", Vector3.new(-200, 50, 140), Color3.fromRGB(255, 200, 0), false)
 	pad3.Parent = folder
 
-	print("[Servidor] Red de Helipuertos y Rascacielos Cyberpunk generados en Workspace.")
+	print("[Servidor] Red de Helipuertos (Base, Torre A, Torre B) generados en Workspace.")
 end
 
 setupHelipads()
@@ -313,7 +323,7 @@ end)
 -- 4. ECONOMÍA Y VALIDACIÓN SERVER-SIDE ANTI-EXPLOIT
 ----------------------------------------------------------------------
 local lastDeliveryTime: { [number]: number } = {}
-local MIN_DELIVERY_INTERVAL = 3.0  -- Cooldown mínimo entre entregas por jugador
+local MIN_DELIVERY_INTERVAL = 2.0  -- Cooldown mínimo entre entregas por jugador
 
 Players.PlayerAdded:Connect(function(player)
 	local leaderstats = Instance.new("Folder")
@@ -344,7 +354,7 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local lastTime = lastDeliveryTime[player.UserId] or 0
 	if (now - lastTime) < MIN_DELIVERY_INTERVAL then
 		warn(string.format("[Servidor ANTI-EXPLOIT] %s intentó cobrar entrega demasiado rápido (cooldown violado).", player.Name))
-		deliveryRejectedEvent:FireClient(player, "Espera 3 segundos entre entregas")
+		deliveryRejectedEvent:FireClient(player, "Espera 2 segundos entre entregas")
 		return
 	end
 
@@ -368,23 +378,23 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local horizDistance = Vector3.new(dronePos.X - padPos.X, 0, dronePos.Z - padPos.Z).Magnitude
 	local vertDiff = dronePos.Y - padPos.Y
 
-	if horizDistance > 25 then
-		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero el dron está a %.1f studs del helipuerto (máx 25).", player.Name, horizDistance))
+	if horizDistance > 30 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero el dron está a %.1f studs del helipuerto (máx 30).", player.Name, horizDistance))
 		deliveryRejectedEvent:FireClient(player, string.format("Estás muy lejos del helipuerto (%.0f studs)", horizDistance))
 		return
 	end
 
-	if vertDiff < -3 or vertDiff > 16 then
-		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero la altura del dron es inválida (diff: %.1f studs, rango: -3 a +16).", player.Name, vertDiff))
+	if vertDiff < -4 or vertDiff > 25 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero la altura del dron es inválida (diff: %.1f studs, rango: -4 a +25).", player.Name, vertDiff))
 		deliveryRejectedEvent:FireClient(player, "Altitud incorrecta respecto a la plataforma")
 		return
 	end
 
 	-- 3. Validar velocidad segura de aterrizaje
 	local droneSpeed = dronePart.AssemblyLinearVelocity.Magnitude
-	if droneSpeed > 30 then
-		warn(string.format("[Servidor ANTI-EXPLOIT] %s aterrizó a exceso de velocidad (%.1f studs/s, máx 30).", player.Name, droneSpeed))
-		deliveryRejectedEvent:FireClient(player, string.format("Velocidad muy alta (%.0f studs/s, máx 30)", droneSpeed))
+	if droneSpeed > 40 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s aterrizó a exceso de velocidad (%.1f studs/s, máx 40).", player.Name, droneSpeed))
+		deliveryRejectedEvent:FireClient(player, string.format("Velocidad muy alta (%.0f studs/s, máx 40)", droneSpeed))
 		return
 	end
 
