@@ -20,19 +20,24 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	local model = Instance.new("Model")
 	model.Name = name
 
+	local isTower = position.Y > 15
+	local padWidth = if isTower then 32 else 36
+
+	-- 1. BASE DE ATERRIZAJE (BasePad)
 	local base = Instance.new("Part")
 	base.Name = "BasePad"
-	base.Size = Vector3.new(28, 3, 28)
+	base.Size = Vector3.new(padWidth, 3, padWidth)
 	base.Position = position
 	base.Anchored = true
 	base.Material = Enum.Material.Metal
-	base.Color = Color3.fromRGB(25, 30, 40)
+	base.Color = Color3.fromRGB(20, 24, 32)
 	base.TopSurface = Enum.SurfaceType.Smooth
 	base.Parent = model
 
+	-- 2. ANILLO PERIMETRAL DE NEÓN
 	local ring = Instance.new("Part")
 	ring.Name = "NeonRing"
-	ring.Size = Vector3.new(26, 0.4, 26)
+	ring.Size = Vector3.new(padWidth - 2, 0.5, padWidth - 2)
 	ring.Position = position + Vector3.new(0, 1.6, 0)
 	ring.Anchored = true
 	ring.CanCollide = false
@@ -40,33 +45,125 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	ring.Color = primaryColor
 	ring.Parent = model
 
+	-- Marcador 'H' o cruz luminosa en la superficie
+	local crossH = Instance.new("Part")
+	crossH.Name = "LandingCrossH"
+	crossH.Size = Vector3.new(12, 0.15, 3)
+	crossH.Position = position + Vector3.new(0, 1.62, 0)
+	crossH.Anchored = true
+	crossH.CanCollide = false
+	crossH.Material = Enum.Material.Neon
+	crossH.Color = Color3.fromRGB(255, 255, 255)
+	crossH.Parent = model
+
+	local crossV = Instance.new("Part")
+	crossV.Name = "LandingCrossV"
+	crossV.Size = Vector3.new(3, 0.15, 12)
+	crossV.Position = position + Vector3.new(0, 1.62, 0)
+	crossV.Anchored = true
+	crossV.CanCollide = false
+	crossV.Material = Enum.Material.Neon
+	crossV.Color = Color3.fromRGB(255, 255, 255)
+	crossV.Parent = model
+
+	-- 3. ILUMINACIÓN Y BALIZA DE HELIPUERTO
 	local beacon = Instance.new("PointLight")
 	beacon.Name = "PadBeacon"
 	beacon.Color = primaryColor
-	beacon.Brightness = 4
-	beacon.Range = 35
-	beacon.Shadows = true
+	beacon.Brightness = 8
+	beacon.Range = 60
+	beacon.Shadows = false
 	beacon.Parent = ring
 
-	-- Haz de luz vertical hacia el cielo (faro holográfico visible desde toda la ciudad)
-	local skyBeam = Instance.new("Part")
-	skyBeam.Name = "HoloSkyBeam"
-	skyBeam.Size = Vector3.new(1.8, 160, 1.8)
-	skyBeam.Position = position + Vector3.new(0, 80, 0)
-	skyBeam.Material = Enum.Material.Neon
-	skyBeam.Color = primaryColor
-	skyBeam.Transparency = 0.65
-	skyBeam.CanCollide = false
-	skyBeam.Anchored = true
-	skyBeam.Parent = model
+	-- 4. EDIFICIO / RASCACIELOS / PILAR
+	local pillarHeight = math.max(position.Y, 4)
+	local towerWidth = if isTower then 30 else 38
 
-	-- Letrero flotante holográfico en el helipuerto
+	local pillar = Instance.new("Part")
+	pillar.Name = "SupportPillar"
+	pillar.Size = Vector3.new(towerWidth, pillarHeight, towerWidth)
+	pillar.Position = Vector3.new(position.X, pillarHeight / 2, position.Z)
+	pillar.Anchored = true
+	pillar.Material = Enum.Material.Metal
+	pillar.Color = Color3.fromRGB(15, 18, 26)
+	pillar.Parent = model
+
+	-- Si es una torre alta, agregar arquitectura cyberpunk visible desde lejos
+	if isTower then
+		local halfW = towerWidth / 2
+		local cornerOffsets = {
+			Vector3.new(-halfW, 0, -halfW),
+			Vector3.new( halfW, 0, -halfW),
+			Vector3.new(-halfW, 0,  halfW),
+			Vector3.new( halfW, 0,  halfW),
+		}
+
+		-- Tiras de neón en las 4 esquinas del rascacielos
+		for i, offset in ipairs(cornerOffsets) do
+			local cornerStrip = Instance.new("Part")
+			cornerStrip.Name = "NeonCorner_" .. tostring(i)
+			cornerStrip.Size = Vector3.new(1.4, pillarHeight, 1.4)
+			cornerStrip.Position = Vector3.new(position.X + offset.X, pillarHeight / 2, position.Z + offset.Z)
+			cornerStrip.Material = Enum.Material.Neon
+			cornerStrip.Color = primaryColor
+			cornerStrip.Anchored = true
+			cornerStrip.CanCollide = false
+			cornerStrip.Parent = model
+		end
+
+		-- Bandas horizontales de ventanas iluminadas cada 20 studs
+		local floorCount = math.floor(pillarHeight / 20)
+		for f = 1, floorCount do
+			local floorY = f * 20
+			local band = Instance.new("Part")
+			band.Name = "FloorBand_" .. tostring(f)
+			band.Size = Vector3.new(towerWidth + 0.6, 1.8, towerWidth + 0.6)
+			band.Position = Vector3.new(position.X, floorY, position.Z)
+			band.Material = Enum.Material.Neon
+			band.Color = primaryColor
+			band.Transparency = 0.35
+			band.Anchored = true
+			band.CanCollide = false
+			band.Parent = model
+		end
+
+		-- Antena de comunicaciones en la esquina del techo con baliza aérea
+		local antenna = Instance.new("Part")
+		antenna.Name = "CommAntenna"
+		antenna.Size = Vector3.new(1.2, 35, 1.2)
+		antenna.Position = position + Vector3.new(halfW - 2, 17.5, halfW - 2)
+		antenna.Material = Enum.Material.Metal
+		antenna.Color = Color3.fromRGB(40, 45, 55)
+		antenna.Anchored = true
+		antenna.CanCollide = false
+		antenna.Parent = model
+
+		local antennaLight = Instance.new("PointLight")
+		antennaLight.Color = Color3.fromRGB(255, 0, 50)
+		antennaLight.Brightness = 8
+		antennaLight.Range = 40
+		antennaLight.Parent = antenna
+
+		-- Haz de luz vertical hacia la estratosfera (colocado en la antena, no en el centro)
+		local skyBeam = Instance.new("Part")
+		skyBeam.Name = "HoloSkyBeam"
+		skyBeam.Size = Vector3.new(3.0, 300, 3.0)
+		skyBeam.Position = position + Vector3.new(halfW - 2, 150, halfW - 2)
+		skyBeam.Material = Enum.Material.Neon
+		skyBeam.Color = primaryColor
+		skyBeam.Transparency = 0.25
+		skyBeam.CanCollide = false
+		skyBeam.Anchored = true
+		skyBeam.Parent = model
+	end
+
+	-- 5. LETRERO HOLOGRÁFICO 3D (visible hasta 1000 studs)
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "PadHoloSign"
-	billboard.Size = UDim2.fromOffset(260, 50)
-	billboard.StudsOffset = Vector3.new(0, 7, 0)
+	billboard.Size = UDim2.fromOffset(300, 65)
+	billboard.StudsOffset = Vector3.new(0, 10, 0)
 	billboard.AlwaysOnTop = true
-	billboard.MaxDistance = 600
+	billboard.MaxDistance = 1000
 	billboard.Parent = base
 
 	local signLabel = Instance.new("TextLabel")
@@ -75,27 +172,18 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	signLabel.Font = Enum.Font.Code
 	signLabel.Text = string.format("◀ %s ▶\n[ZONA DE ATERRIZAJE]", name:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", ""):upper())
 	signLabel.TextColor3 = primaryColor
-	signLabel.TextSize = 13
+	signLabel.TextSize = 15
 	signLabel.TextStrokeTransparency = 0.2
 	signLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	signLabel.Parent = billboard
 
-	local pillar = Instance.new("Part")
-	pillar.Name = "SupportPillar"
-	local pillarHeight = math.max(position.Y, 2)
-	pillar.Size = Vector3.new(12, pillarHeight, 12)
-	pillar.Position = Vector3.new(position.X, position.Y / 2, position.Z)
-	pillar.Anchored = true
-	pillar.Material = Enum.Material.Concrete
-	pillar.Color = Color3.fromRGB(15, 18, 25)
-	pillar.Parent = model
-
+	-- 6. RAMPA DE ACCESO (si aplica)
 	if hasRamp then
 		local ramp = Instance.new("Part")
 		ramp.Name = "AccessRamp"
-		ramp.Size = Vector3.new(10, 0.6, 18)
+		ramp.Size = Vector3.new(12, 0.6, 20)
 		local rampAngle = math.rad(-14)
-		ramp.CFrame = CFrame.new(position.X, position.Y * 0.5, position.Z + 21) * CFrame.Angles(rampAngle, 0, 0)
+		ramp.CFrame = CFrame.new(position.X, position.Y * 0.5, position.Z + 24) * CFrame.Angles(rampAngle, 0, 0)
 		ramp.Anchored = true
 		ramp.Material = Enum.Material.Metal
 		ramp.Color = Color3.fromRGB(20, 25, 35)
@@ -108,22 +196,24 @@ end
 
 local function setupHelipads()
 	local folder = Workspace:FindFirstChild("LandingPads") :: Folder?
-	if not folder then
+	if folder then
+		folder:ClearAllChildren()
+	else
 		folder = Instance.new("Folder")
 		folder.Name = "LandingPads"
 		folder.Parent = Workspace
-
-		local pad1 = createHelipad("Pad_HangarCentral", Vector3.new(0, 4, 0), Color3.fromRGB(0, 240, 255), true)
-		pad1.Parent = folder
-
-		local pad2 = createHelipad("Pad_TorreArasaka", Vector3.new(160, 95, -180), Color3.fromRGB(255, 30, 120), false)
-		pad2.Parent = folder
-
-		local pad3 = createHelipad("Pad_DistritoNeon", Vector3.new(-200, 50, 140), Color3.fromRGB(255, 200, 0), false)
-		pad3.Parent = folder
-
-		print("[Servidor] Red de Helipuertos y Rampa generados en Workspace.")
 	end
+
+	local pad1 = createHelipad("Pad_HangarCentral", Vector3.new(0, 4, 0), Color3.fromRGB(0, 240, 255), true)
+	pad1.Parent = folder
+
+	local pad2 = createHelipad("Pad_TorreArasaka", Vector3.new(160, 95, -180), Color3.fromRGB(255, 30, 120), false)
+	pad2.Parent = folder
+
+	local pad3 = createHelipad("Pad_DistritoNeon", Vector3.new(-200, 50, 140), Color3.fromRGB(255, 200, 0), false)
+	pad3.Parent = folder
+
+	print("[Servidor] Red de Helipuertos y Rascacielos Cyberpunk generados en Workspace.")
 end
 
 setupHelipads()

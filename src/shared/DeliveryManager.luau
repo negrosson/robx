@@ -124,6 +124,14 @@ function DeliveryManager.new(): ManagerInstance
 		onDeliveryCallback = nil,
 	}
 
+	-- Auto-refrescar cuando se repliquen helipuertos del servidor
+	if padsFolder then
+		padsFolder.ChildAdded:Connect(function()
+			task.wait(0.2)
+			self:RefreshTargets()
+		end)
+	end
+
 	-- Escuchar confirmación validada del servidor
 	self.confirmedConn = confirmedEvent.OnClientEvent:Connect(function(padName: string, reward: number)
 		print(string.format("[DeliveryManager] ¡Servidor confirmó entrega en %s! (+%d ₵)", padName, reward))
