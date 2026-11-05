@@ -12,6 +12,10 @@ NetworkEvents.Names = {
 	ClaimDelivery      = "DeliveryCompleted",  -- Petición de entrega del cliente
 	DeliveryConfirmed  = "DeliveryConfirmed",  -- Confirmación validada por servidor
 	DroneDestroyed     = "DroneDestroyed",
+	OnFireWeapon       = "OnFireWeapon",
+	OnDamageTaken      = "OnDamageTaken",
+	OnEMPActivated     = "OnEMPActivated",
+	OnHeatUpdate       = "OnHeatUpdate",
 }
 
 local FOLDER_NAME = "CyberNetworkEvents"

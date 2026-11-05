@@ -137,6 +137,64 @@ local function hasLineOfSight(origin: Vector3, target: Vector3, exclude: { Insta
 	return false
 end
 
+-- Genera explosión física al destruir un dron
+local function destroyDrone(state: DroneState)
+	local part = state.part
+	if not part or not part.Parent then return end
+
+	local explosion = Instance.new("Explosion")
+	explosion.Position       = part.Position
+	explosion.BlastRadius    = 12
+	explosion.BlastPressure  = 3e5
+	explosion.DestroyJointRadiusPercent = 0  -- no destruye el mundo, solo aplica fuerza
+	explosion.ExplosionType  = Enum.ExplosionType.NoCraters
+	explosion.Parent         = Workspace
+	Debris:AddItem(explosion, 3)
+
+	print(string.format("[CombatService] Dron destruido: %s", part.Name))
+	activeDrones[part] = nil
+
+	-- Destruir la parte física del dron enemigo tras breve pausa
+	task.delay(0.5, function()
+		if part and part.Parent then
+			part:Destroy()
+		end
+	end)
+end
+
+-- Activa estado EMP: deshabilita LinearVelocity del dron 2 segundos
+local function triggerEMP(state: DroneState)
+	state.isEMPed  = true
+	state.empEndTime = os.clock() + EMP_DURATION
+	state.heat     = state.maxHeat  -- fijar al máximo
+
+	local part = state.part
+	if not part or not part.Parent then return end
+
+	local lv = part:FindFirstChild("FlightVelocity") :: LinearVelocity?
+	local ao = part:FindFirstChild("FlightOrientation") :: AlignOrientation?
+
+	if lv then lv.Enabled = false end
+	if ao then ao.Enabled = false end
+
+	-- Notificar cliente del EMP
+	if state.owner then
+		onEMPEvent:FireClient(state.owner, EMP_DURATION)
+	end
+
+	print(string.format("[CombatService] EMP activado en %s — caída libre %.1fs", part.Name, EMP_DURATION))
+
+	task.delay(EMP_DURATION, function()
+		if activeDrones[part] then
+			state.isEMPed = false
+			state.heat    = state.maxHeat * 0.8  -- calor residual al recuperarse
+			if lv and lv.Parent then lv.Enabled = true end
+			if ao and ao.Parent then ao.Enabled = true end
+			print(string.format("[CombatService] Sistemas restaurados en %s", part.Name))
+		end
+	end)
+end
+
 -- Aplica daño a un DroneState con mitigación de blindaje
 local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any)
 	local mitigation = math.clamp(state.armorReduction, 0, 0.90)
@@ -175,64 +233,6 @@ local function applyHeat(state: DroneState, rawHeat: number)
 	if state.owner then
 		onHeatUpdateEvent:FireClient(state.owner, state.heat / state.maxHeat)
 	end
-end
-
--- Genera explosión física al destruir un dron
-function destroyDrone(state: DroneState)
-	local part = state.part
-	if not part or not part.Parent then return end
-
-	local explosion = Instance.new("Explosion")
-	explosion.Position       = part.Position
-	explosion.BlastRadius    = 12
-	explosion.BlastPressure  = 3e5
-	explosion.DestroyJointRadiusPercent = 0  -- no destruye el mundo, solo aplica fuerza
-	explosion.ExplosionType  = Enum.ExplosionType.NoCraters
-	explosion.Parent         = Workspace
-	Debris:AddItem(explosion, 3)
-
-	print(string.format("[CombatService] Dron destruido: %s", part.Name))
-	activeDrones[part] = nil
-
-	-- Destruir la parte física del dron enemigo tras breve pausa
-	task.delay(0.5, function()
-		if part and part.Parent then
-			part:Destroy()
-		end
-	end)
-end
-
--- Activa estado EMP: deshabilita LinearVelocity del dron 2 segundos
-function triggerEMP(state: DroneState)
-	state.isEMPed  = true
-	state.empEndTime = os.clock() + EMP_DURATION
-	state.heat     = state.maxHeat  -- fijar al máximo
-
-	local part = state.part
-	if not part or not part.Parent then return end
-
-	local lv = part:FindFirstChild("FlightVelocity") :: LinearVelocity?
-	local ao = part:FindFirstChild("FlightOrientation") :: AlignOrientation?
-
-	if lv then lv.Enabled = false end
-	if ao then ao.Enabled = false end
-
-	-- Notificar cliente del EMP
-	if state.owner then
-		onEMPEvent:FireClient(state.owner, EMP_DURATION)
-	end
-
-	print(string.format("[CombatService] EMP activado en %s — caída libre %.1fs", part.Name, EMP_DURATION))
-
-	task.delay(EMP_DURATION, function()
-		if activeDrones[part] then
-			state.isEMPed = false
-			state.heat    = state.maxHeat * 0.8  -- calor residual al recuperarse
-			if lv and lv.Parent then lv.Enabled = true end
-			if ao and ao.Parent then ao.Enabled = true end
-			print(string.format("[CombatService] Sistemas restaurados en %s", part.Name))
-		end
-	end)
 end
 
 ----------------------------------------------------------------------
@@ -462,3 +462,4 @@ _G.CombatService = {
 }
 
 print("[CombatService] Servicio de combate activo. Esperando conexiones...")
+

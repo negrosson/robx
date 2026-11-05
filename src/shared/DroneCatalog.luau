@@ -271,3 +271,4 @@ function DroneCatalog.FormatTier(tier: number): string
 end
 
 return DroneCatalog
+

@@ -179,3 +179,4 @@ function EnemyTypes.Scale(spec: EnemySpec, difficulty: number): EnemySpec
 end
 
 return EnemyTypes
+

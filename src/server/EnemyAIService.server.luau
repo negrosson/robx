@@ -444,3 +444,4 @@ _G.EnemyAIService = {
 }
 
 print("[EnemyAIService] Servicio de IA activo a 10 Hz.")
+

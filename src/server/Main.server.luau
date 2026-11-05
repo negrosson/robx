@@ -165,7 +165,17 @@ flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 		else
 			warn(string.format("[Servidor] Error al transferir propiedad física a %s: %s", player.Name, tostring(err)))
 		end
+
+		-- Registrar dron del jugador en el servicio de combate
+		if _G.CombatService and _G.CombatService.Register then
+			_G.CombatService.Register(dronePart, 100, 100, 8, 0.0, 0.55, player)
+		end
 	elseif state == "StopFlying" then
+		-- Desregistrar del servicio de combate
+		if _G.CombatService and _G.CombatService.Unregister then
+			_G.CombatService.Unregister(dronePart)
+		end
+
 		dronePart.AssemblyLinearVelocity = Vector3.zero
 		dronePart.AssemblyAngularVelocity = Vector3.zero
 		dronePart.Anchored = true

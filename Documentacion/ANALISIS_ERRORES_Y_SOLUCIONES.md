@@ -193,5 +193,37 @@ Se integró el método `:Destroy()` en `DroneController.luau` y `DeliveryManager
 * Elimina emisores y estelas (`DroneVFX`), contenedores (`DroneCargo`) y desvincula eventos de entrada del teclado.
 
 ---
+
+## 9. Fase 2: Catálogo de Drones, Arsenal Táctico, IA Enemiga 3D y Físicas de Inercia
+
+### 🛸 1. Catálogo de Drones con Tributo Histórico (`src/shared/DroneCatalog.luau`)
+Se implementó un catálogo tipado (`--!strict`) con 4 Tiers y 5 drones de autor que homenajean a pioneros de la aviación, radio y cibernética mediante códigos industriales y patentes históricas:
+1. **Tel-98 «Teleautomaton» (Tier 1):** Homenaje a la patente US613809 (Nikola Tesla, 1898) sobre control remoto por radiofrecuencia. Quad experimental ligero con blindaje dieléctrico (resistencia EMP del 55%) y 1 punto de anclaje.
+2. **Oehm-24 «Multicross» (Tier 2):** Homenaje al vuelo en circuito cerrado de Étienne Œhmichen (1924). Quad equilibrado con alta respuesta vertical (42 studs/s) optimizado para cañones urbanos estrechos.
+3. **Breg-07 «Gyro-Wing» (Tier 2):** Homenaje al Gyroplane No.1 de Louis Breguet (1907). Rotores basculantes con velocidad crucero elevada (80 studs/s, turbo 130 studs/s) e inclinación agresiva de 26°.
+4. **Skor-39 «Heavy-Lift» (Tier 3):** Homenaje al VS-300 de Igor Sikorsky (1939). Hexacóptero blindado con 280 HP, reducción pasiva de daño del 25%, gran bahía de carga y 3 anclajes de armas.
+5. **W-NER «Daemon-Link» (Tier 4):** Homenaje a Norbert Wiener y la teoría cibernética (1948). Propulsión antigravedad/iónica sin hélices mecánicas, disipación de calor instantánea (22 pts/s), 80% resistencia a EMP y enlace neuronal de respuesta inmediata.
+
+Incluye la función puente `DroneCatalog.ToControllerConfig(spec)` para traducir automáticamente cualquier ficha de dron a los parámetros de vuelo leídos por `DroneController.new()`.
+
+### ⚡ 2. Arsenal Táctico y Tipologías de Daño (`src/shared/DroneWeapons.luau` y `CombatService.server.luau`)
+Se diseñó un sistema armamentístico en 4 familias tecnológicas cyberpunk:
+1. **Térmica / Plasma («Magma-Spike Mk.II»):** Lanza-plasma que aplica daño continuo (*DoT* de 6 HP/s durante 3.5s) y genera turbulencia térmica que reduce la sustentación vertical de la víctima en un 35% durante 2 segundos.
+2. **Cinética / Gauss («Rail-Driver HVP»):** Cañón de riel hipersónico (*Hitscan* mediante `Raycast` autoritativo). Atraviesa cristales/paneles compuestos y aplica un impulso de 85 Newtons que colapsa momentáneamente el `AlignOrientation` del blanco provocando pérdida de control angular.
+3. **Misiles Guiados («Smart Gyro-Lock M4»):** Cabeza buscadora subsónica (90 studs/s) que corrige su trayectoria hacia el objetivo mediante curvas Bézier cuadráticas y detona con onda de fragmentación (120 N de impulso).
+4. **Ciberguerra / Microondas («Synapse Overheat»):** Rayo continuo de alta frecuencia (20 Hz) que inyecta calor térmico puro en el hardware enemigo. Al llegar al 100% de calor, fuerza un estado `Overheated/EMP` que apaga las restricciones de vuelo (`LinearVelocity.Enabled = false` y `AlignOrientation.Enabled = false`) durante 2 segundos provocando caída libre gravitatoria.
+
+### 🤖 3. Facciones Hostiles e Inteligencia Artificial 3D a 10 Hz (`EnemyTypes.luau` y `EnemyAIService.server.luau`)
+Se desarrolló un subsistema de IA pura sin `PathfindingService`, ejecutado en el servidor a 10 Hz mediante acumuladores sobre `RunService.Heartbeat`:
+1. **Scav-Gnats (Enjambre Chatarrero):** Pequeños quads que operan en enjambre utilizando algoritmos de separación y persecución (*Seek* + *Separation*). Aplican embestidas físicas directas (*Ramming*) de 55 N para desestabilizar al dron del jugador y forzar la caída o destrucción de paquetes.
+2. **Aegis-44 (Torreta Estacionaria):** Centinelas en cornisas con cono de detección angular de 120°. Realizan intercepción balística y disparan ráfagas de Rail-Driver si detectan naves sin autorización en un radio de 160 studs.
+3. **Kuroshio V (Interceptores Corporativos):** Drones de intercepción ágiles (70 studs/s) que calculan vectores tangenciales para orbitar lateralmente a 100 studs del jugador mientras lo hostigan con microondas para inducir sobrecalentamiento.
+
+### 📦 4. Acoplamiento Físico con Cargas e Inercia Real (`DroneCargo.luau` y `DroneController.luau`)
+El peso de los paquetes afecta la simulación dinámica en tiempo real:
+- **Penalización de Velocidad:** $\text{VelocidadEfectiva} = \frac{\text{VelocidadBase}}{1 + (\text{MasaCarga} \times \alpha)}$, garantizando una respuesta más pesada, mayor distancia de frenado y menor aceleración.
+- **Detonación por Energía Cinética:** El sistema evalúa el impacto cinético ($E_k = \frac{1}{2} M_{\text{total}} \|\vec{v}\|^2$). Si una carga clasificada como inestable choca a alta velocidad superando el umbral de 4,000 Joules, se genera una detonación física con `Explosion` que destruye el contenedor y desestabiliza el dron.
+
+---
 *Fin del documento de auditoría técnica.*
 
