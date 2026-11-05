@@ -265,19 +265,26 @@ Se sincronizaron de forma homogénea las definiciones en `Main.server.luau`, `De
 ## 11. Corrección Definitiva: Error «SISTEMA DE ENTREGA NO DISPONIBLE» y Resiliencia de Red
 
 ### 🔍 1. Diagnóstico de Causa Raíz
-Al presionar la tecla `[G]`, la interfaz mostraba en rojo: **`SISTEMA DE ENTREGA NO DISPONIBLE`**. La investigación profunda reveló la secuencia exacta del fallo:
-1. **Carrera de Replicación Cliente-Servidor:** Al iniciar el juego en Roblox Studio o servidor live, el cliente cargaba `Main.client.luau` y creaba `DroneController.new()` antes de que `CyberNetworkEvents` (`DeliveryCompleted` y `DeliveryConfirmed`) hubieran terminado de replicarse desde el servidor.
-2. **Excepción no Capturada en `NetworkEvents.Get`:** Al llamarse `NetworkEvents.Get("DeliveryCompleted")` en `DeliveryManager.new()`, la función lanzaba un `error()` de Luau tras agotar el timeout de espera en lugar de devolver un fallback seguro o reintentar.
-3. **Instanciación Fallida Silenciada:** En `DroneController.luau`, la llamada `pcall(function() deliveryManager = DeliveryMgr.new() end)` capturaba el error pero no imprimía ningún mensaje de advertencia. La variable `deliveryManager` quedaba en `nil`, provocando que al pulsar `[G]` la condición `if self.deliveryManager` fuera falsa.
+Al presionar la tecla `[G]`, la interfaz mostraba en rojo: **`SISTEMA DE ENTREGA NO DISPONIBLE`**. La inspección de los logs oficiales de Roblox Studio (`%LOCALAPPDATA%\Roblox\logs`) arrojó el fallo definitivo:
+```
+Error: ReplicatedStorage.DeliveryManager:32: Expected '->' when parsing function type, got '='
+Warning: [DroneController] Falló require(DeliveryManager) bajo demanda: Requested module experienced an error while loading
+```
+1. **Error de Sintaxis en Tipado Luau:** En `src/shared/DeliveryManager.luau`, la definición del tipo de callback estaba escrita como `((reward: number, padName: string) => ())?` utilizando `=>` (sintaxis de TypeScript/JS) en lugar de `->` (sintaxis requerida por Luau estricto).
+2. **Fallo en Tiempo de Parseo:** Roblox no podía compilar `DeliveryManager.luau` y marcaba el módulo como corrupto en memoria (`Requested module experienced an error while loading`).
+3. **Cascada de Fallos:** Cualquier intento de importar `DeliveryManager` fallaba de inmediato, dejando `self.deliveryManager = nil` e impidiendo que el HUD mostrara la tarjeta de misión y que la tecla `[G]` procesara entregas.
 
 ### 🛠️ 2. Solución de Ingeniería Implementada
-1. **Resolución Segura de Eventos de Red (`NetworkEvents.luau` y `DeliveryManager.luau`):**
+1. **Corrección de Tipado en `DeliveryManager.luau`:**
+   * Se corrigió la signatura a `onDeliveryCallback: ((reward: number, padName: string) -> ())?`.
+   * El módulo ahora compila y carga limpiamente en Luau estricto sin errores.
+2. **Resolución Segura de Eventos de Red (`NetworkEvents.luau` y `DeliveryManager.luau`):**
    * Se modificó `NetworkEvents.Get()` para usar búsqueda inmediata con `FindFirstChild` antes de cualquier yield, reduciendo la latencia de arranque a 0 ms si los objetos ya están replicados.
-   * Se incorporó la función auxiliar `resolveRemote()` en `DeliveryManager.luau`: comprueba `NetworkEvents.Get`, luego `CyberNetworkEvents`, y finalmente la raíz de `ReplicatedStorage`. `DeliveryManager.new()` **nunca falla ni lanza excepciones**, garantizando que la instancia siempre se cree con éxito.
-2. **Conexión Asíncrona en Background:**
-   * Si `DeliveryConfirmed` no estuviese listo en el milisegundo exacto de inicialización, una rutina en segundo plano (`task.spawn`) vigila su llegada y enlaza la señal en cuanto el servidor la publique.
-3. **Mecanismo de Auto-Recuperación Bajo Demanda (`DroneController.luau`):**
-   * Si por cualquier eventualidad extrema de red `self.deliveryManager` estuviera vacío al pulsar `[G]`, `DroneController` detecta el estado nulo, lo auto-inicializa inmediatamente bajo demanda, re-vincula los callbacks del HUD/carga y procesa la entrega sin interrumpir al jugador.
+   * Se incorporó la función auxiliar `resolveRemote()` en `DeliveryManager.luau`: comprueba `NetworkEvents.Get`, luego `CyberNetworkEvents`, y finalmente la raíz de `ReplicatedStorage`.
+3. **Mecanismo de Auto-Recuperación y Blindaje de Ciclo de Vida (`DroneController.luau`):**
+   * Activación garantizada en `new()`, en `StartFlying()` al presionar `[E]`, y auto-recuperación al pulsar `[G]`.
+4. **Reubicación de `missionBox` en el HUD:**
+   * Se reposicionó el recuadro de misión a `Y = 160` studs para evitar que la lista de jugadores de Roblox Studio lo oculte.
 
 ---
 *Fin del documento de auditoría técnica.*

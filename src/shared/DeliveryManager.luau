@@ -38,7 +38,7 @@ export type ManagerInstance = {
 	claimEvent: RemoteEvent?,
 	confirmedEvent: RemoteEvent?,
 	confirmedConn: RBXScriptConnection?,
-	onDeliveryCallback: ((reward: number, padName: string) => ())?,
+	onDeliveryCallback: ((reward: number, padName: string) -> ())?,
 }
 
 -- Tolerancias de aterrizaje generosas para jugabilidad fluida
