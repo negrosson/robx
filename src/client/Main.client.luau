@@ -244,19 +244,29 @@ task.spawn(function()
 	end
 	dbg("TestDrone encontrado: " .. droneEntity:GetFullName())
 
-	-- Verificar RemoteEvent del servidor
-	local flightEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 10)
+	-- Verificar RemoteEvents del servidor
+	local flightEvent = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
 	if not flightEvent then
-		-- Intentar en subcarpeta
-		local evFolder = ReplicatedStorage:WaitForChild("CyberNetworkEvents", 5)
+		local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents") :: Folder?
 		if evFolder then
-			flightEvent = evFolder:WaitForChild("DroneFlightState", 5)
+			flightEvent = evFolder:FindFirstChild("DroneFlightState") :: RemoteEvent?
 		end
+	end
+	if not flightEvent then
+		flightEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 8) :: RemoteEvent?
 	end
 	if flightEvent then
 		dbg("DroneFlightState RemoteEvent OK")
-	else
-		warn("[CLIENTE] DroneFlightState no encontrado - el dron puede no desanclarse")
+	end
+
+	-- Asegurar que los eventos de entrega estén replicados
+	local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents") :: Folder?
+	if not evFolder then
+		pcall(function() evFolder = ReplicatedStorage:WaitForChild("CyberNetworkEvents", 4) :: Folder? end)
+	end
+	if evFolder then
+		pcall(function() evFolder:WaitForChild("DeliveryCompleted", 3) end)
+		pcall(function() evFolder:WaitForChild("DeliveryConfirmed", 3) end)
 	end
 
 	-- Crear instancia del controlador (con timeout de protección)

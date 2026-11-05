@@ -261,5 +261,24 @@ Se sincronizaron de forma homogénea las definiciones en `Main.server.luau`, `De
    * Al entregar exitosamente, se muestra el popup dorado: `¡ENTREGA EXITOSA EN TORRE A! +250 CYBER-CRÉDITOS`.
 
 ---
+
+## 11. Corrección Definitiva: Error «SISTEMA DE ENTREGA NO DISPONIBLE» y Resiliencia de Red
+
+### 🔍 1. Diagnóstico de Causa Raíz
+Al presionar la tecla `[G]`, la interfaz mostraba en rojo: **`SISTEMA DE ENTREGA NO DISPONIBLE`**. La investigación profunda reveló la secuencia exacta del fallo:
+1. **Carrera de Replicación Cliente-Servidor:** Al iniciar el juego en Roblox Studio o servidor live, el cliente cargaba `Main.client.luau` y creaba `DroneController.new()` antes de que `CyberNetworkEvents` (`DeliveryCompleted` y `DeliveryConfirmed`) hubieran terminado de replicarse desde el servidor.
+2. **Excepción no Capturada en `NetworkEvents.Get`:** Al llamarse `NetworkEvents.Get("DeliveryCompleted")` en `DeliveryManager.new()`, la función lanzaba un `error()` de Luau tras agotar el timeout de espera en lugar de devolver un fallback seguro o reintentar.
+3. **Instanciación Fallida Silenciada:** En `DroneController.luau`, la llamada `pcall(function() deliveryManager = DeliveryMgr.new() end)` capturaba el error pero no imprimía ningún mensaje de advertencia. La variable `deliveryManager` quedaba en `nil`, provocando que al pulsar `[G]` la condición `if self.deliveryManager` fuera falsa.
+
+### 🛠️ 2. Solución de Ingeniería Implementada
+1. **Resolución Segura de Eventos de Red (`NetworkEvents.luau` y `DeliveryManager.luau`):**
+   * Se modificó `NetworkEvents.Get()` para usar búsqueda inmediata con `FindFirstChild` antes de cualquier yield, reduciendo la latencia de arranque a 0 ms si los objetos ya están replicados.
+   * Se incorporó la función auxiliar `resolveRemote()` en `DeliveryManager.luau`: comprueba `NetworkEvents.Get`, luego `CyberNetworkEvents`, y finalmente la raíz de `ReplicatedStorage`. `DeliveryManager.new()` **nunca falla ni lanza excepciones**, garantizando que la instancia siempre se cree con éxito.
+2. **Conexión Asíncrona en Background:**
+   * Si `DeliveryConfirmed` no estuviese listo en el milisegundo exacto de inicialización, una rutina en segundo plano (`task.spawn`) vigila su llegada y enlaza la señal en cuanto el servidor la publique.
+3. **Mecanismo de Auto-Recuperación Bajo Demanda (`DroneController.luau`):**
+   * Si por cualquier eventualidad extrema de red `self.deliveryManager` estuviera vacío al pulsar `[G]`, `DroneController` detecta el estado nulo, lo auto-inicializa inmediatamente bajo demanda, re-vincula los callbacks del HUD/carga y procesa la entrega sin interrumpir al jugador.
+
+---
 *Fin del documento de auditoría técnica.*
 

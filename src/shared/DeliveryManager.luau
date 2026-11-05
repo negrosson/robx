@@ -5,7 +5,16 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace         = game:GetService("Workspace")
 
-local NetworkEvents = require(script.Parent:WaitForChild("NetworkEvents", 5) :: ModuleScript)
+local NetworkEvents: any = nil
+pcall(function()
+	local neMod = ReplicatedStorage:FindFirstChild("NetworkEvents") :: ModuleScript?
+	if not neMod then
+		neMod = ReplicatedStorage:WaitForChild("NetworkEvents", 10) :: ModuleScript?
+	end
+	if neMod then
+		NetworkEvents = require(neMod)
+	end
+end)
 
 local DeliveryManager = {}
 DeliveryManager.__index = DeliveryManager
@@ -26,8 +35,8 @@ export type ManagerInstance = {
 	touchdownTimer: number,
 	isLanded: boolean,
 	currentZonePadName: string?,
-	claimEvent: RemoteEvent,
-	confirmedEvent: RemoteEvent,
+	claimEvent: RemoteEvent?,
+	confirmedEvent: RemoteEvent?,
 	confirmedConn: RBXScriptConnection?,
 	onDeliveryCallback: ((reward: number, padName: string) => ())?,
 }
@@ -51,10 +60,38 @@ local function getPadDisplayName(padName: string): string
 	end
 end
 
+local function resolveRemote(eventName: string): RemoteEvent?
+	local ev: RemoteEvent? = nil
+	if NetworkEvents and NetworkEvents.Get then
+		pcall(function() ev = NetworkEvents.Get(eventName) end)
+	end
+	if not ev then
+		local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents")
+		if evFolder then
+			ev = evFolder:FindFirstChild(eventName) :: RemoteEvent?
+		end
+	end
+	if not ev then
+		ev = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
+	end
+	if not ev then
+		pcall(function()
+			ev = ReplicatedStorage:WaitForChild(eventName, 3) :: RemoteEvent?
+		end)
+	end
+	return ev
+end
+
 function DeliveryManager.new(): ManagerInstance
-	local claimEvent = NetworkEvents.Get(NetworkEvents.Names.ClaimDelivery)
-	local confirmedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryConfirmed)
-	local padsFolder = Workspace:WaitForChild("LandingPads", 10) :: Folder?
+	local claimEvent = resolveRemote("DeliveryCompleted")
+	local confirmedEvent = resolveRemote("DeliveryConfirmed")
+
+	local padsFolder = Workspace:FindFirstChild("LandingPads") :: Folder?
+	if not padsFolder then
+		pcall(function()
+			padsFolder = Workspace:WaitForChild("LandingPads", 4) :: Folder?
+		end)
+	end
 
 	local targets: { DeliveryTarget } = {}
 
@@ -145,32 +182,56 @@ function DeliveryManager.new(): ManagerInstance
 	end
 
 	-- Escuchar confirmación validada del servidor
-	self.confirmedConn = confirmedEvent.OnClientEvent:Connect(function(padName: string, reward: number)
-		print(string.format("[DeliveryManager] ¡Servidor confirmó entrega en %s! (+%d ₵)", padName, reward))
+	if confirmedEvent then
+		self.confirmedConn = confirmedEvent.OnClientEvent:Connect(function(padName: string, reward: number)
+			print(string.format("[DeliveryManager] ¡Servidor confirmó entrega en %s! (+%d ₵)", padName, reward))
 
-		-- Actualizar helipuerto de origen al recién completado
-		self.originPadName = padName
+			-- Actualizar helipuerto de origen al recién completado
+			self.originPadName = padName
 
-		-- Buscar nombre visible
-		local displayName = getPadDisplayName(padName)
-		for _, tgt in ipairs(self.targets) do
-			if tgt.name == padName then
-				displayName = tgt.displayName
-				break
+			-- Buscar nombre visible
+			local displayName = getPadDisplayName(padName)
+			for _, tgt in ipairs(self.targets) do
+				if tgt.name == padName then
+					displayName = tgt.displayName
+					break
+				end
 			end
-		end
 
-		if self.onDeliveryCallback then
-			self.onDeliveryCallback(reward, displayName)
-		end
+			if self.onDeliveryCallback then
+				self.onDeliveryCallback(reward, displayName)
+			end
 
-		-- Asignar nuevo objetivo aleatorio distinto al helipuerto actual
-		self:PickNextTarget(padName)
-	end)
+			-- Asignar nuevo objetivo aleatorio distinto al helipuerto actual
+			self:PickNextTarget(padName)
+		end)
+	else
+		task.spawn(function()
+			local ev = resolveRemote("DeliveryConfirmed")
+			if ev and not self.confirmedConn then
+				self.confirmedEvent = ev
+				self.confirmedConn = ev.OnClientEvent:Connect(function(padName: string, reward: number)
+					print(string.format("[DeliveryManager] ¡Servidor confirmó entrega en %s! (+%d ₵)", padName, reward))
+					self.originPadName = padName
+					local displayName = getPadDisplayName(padName)
+					for _, tgt in ipairs(self.targets) do
+						if tgt.name == padName then
+							displayName = tgt.displayName
+							break
+						end
+					end
+					if self.onDeliveryCallback then
+						self.onDeliveryCallback(reward, displayName)
+					end
+					self:PickNextTarget(padName)
+				end)
+			end
+		end)
+	end
 
 	-- Escuchar rechazo de entrega para resetear estado
 	pcall(function()
-		local rejectedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryRejected)
+		local rejectedEvent = resolveRemote("DeliveryRejected")
 		if rejectedEvent then
 			rejectedEvent.OnClientEvent:Connect(function(reason: string)
 				warn("[DeliveryManager] Servidor rechazó entrega:", reason)
@@ -180,8 +241,10 @@ function DeliveryManager.new(): ManagerInstance
 		end
 	end)
 
+	local initialTarget = self.targets[self.currentTargetIndex]
+	local initialName = if initialTarget then initialTarget.displayName else "Torre A"
 	print(string.format("[DeliveryManager] Inicializado con %d helipuertos. Objetivo inicial: %s",
-		#targets, targets[self.currentTargetIndex].displayName))
+		#targets, initialName))
 
 	return setmetatable(self, DeliveryManager) :: any
 end
@@ -340,6 +403,9 @@ end
 
 -- Envía la solicitud de reclamo al servidor
 function DeliveryManager.CompleteDelivery(self: ManagerInstance, padName: string)
+	if not self.claimEvent then
+		self.claimEvent = resolveRemote("DeliveryCompleted")
+	end
 	if self.claimEvent then
 		print(string.format("[DeliveryManager] Reclamando entrega en el servidor para '%s'...", padName))
 		self.claimEvent:FireServer(padName)

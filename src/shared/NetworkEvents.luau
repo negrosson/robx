@@ -66,15 +66,25 @@ function NetworkEvents.Get(eventName: string): RemoteEvent
 		end
 		return ev
 	else
-		-- Cliente: buscar con timeout en la carpeta central
-		local folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 8) :: Folder?
+		-- 1. Buscar en CyberNetworkEvents (inmediato si ya está disponible)
+		local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME) :: Folder?
+		if not folder then
+			folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 5) :: Folder?
+		end
+
 		if folder then
-			local ev = folder:WaitForChild(eventName, 5) :: RemoteEvent?
+			local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
+			if not ev then
+				ev = folder:WaitForChild(eventName, 4) :: RemoteEvent?
+			end
 			if ev then return ev end
 		end
 
-		-- Fallback a la raíz de ReplicatedStorage
-		local rootEv = ReplicatedStorage:WaitForChild(eventName, 5) :: RemoteEvent?
+		-- 2. Fallback a la raíz de ReplicatedStorage
+		local rootEv = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
+		if not rootEv then
+			rootEv = ReplicatedStorage:WaitForChild(eventName, 4) :: RemoteEvent?
+		end
 		if rootEv then return rootEv end
 
 		error(string.format("[NetworkEvents] No se pudo encontrar el RemoteEvent '%s'", eventName))

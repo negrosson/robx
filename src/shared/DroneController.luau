@@ -201,7 +201,19 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 	if DroneCargo then pcall(function() cargo = DroneCargo.new(rootPart) end) end
 
 	local deliveryManager: any = nil
-	if DeliveryMgr then pcall(function() deliveryManager = DeliveryMgr.new() end) end
+	if DeliveryMgr then
+		local okDm, dmResult = pcall(function()
+			return DeliveryMgr.new()
+		end)
+		if okDm and dmResult then
+			deliveryManager = dmResult
+			print("[DroneController] DeliveryManager instanciado con éxito.")
+		else
+			warn("[DroneController] ¡ERROR AL INSTANCIAR DeliveryManager!:", dmResult)
+		end
+	else
+		warn("[DroneController] ¡ERROR! DeliveryMgr módulo es NIL (lazyRequire falló).")
+	end
 
 	-- 6. Construir instancia
 	local self = setmetatable({
@@ -618,6 +630,32 @@ function DroneController:BindInputs()
 					pcall(function() (self.hud :: any):ShowHint("RECARGANDO PAQUETE... ESPERA UN SEGUNDO", true) end)
 				end
 				return
+			end
+
+			-- Auto-recuperación: si deliveryManager era nil por latencia de carga inicial, reintentar ahora
+			if not self.deliveryManager then
+				print("[DroneController] deliveryManager era nil, intentando inicializar bajo demanda...")
+				local DelivMod = ReplicatedStorage:FindFirstChild("DeliveryManager") :: ModuleScript?
+				if DelivMod then
+					local okReq, modResult = pcall(function() return require(DelivMod) end)
+					if okReq and modResult then
+						local okNew, inst = pcall(function() return modResult.new() end)
+						if okNew and inst then
+							self.deliveryManager = inst
+							if (inst :: any).SetOnDeliveryCallback then
+								(inst :: any):SetOnDeliveryCallback(function(reward: number, padName: string)
+									if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName) end) end
+									if self.cargo then pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end) end
+								end)
+							end
+							print("[DroneController] ¡deliveryManager inicializado bajo demanda con éxito!")
+						else
+							warn("[DroneController] Falló modResult.new() bajo demanda:", inst)
+						end
+					else
+						warn("[DroneController] Falló require(DeliveryManager) bajo demanda:", modResult)
+					end
+				end
 			end
 
 			if self.deliveryManager and (self.deliveryManager :: any).TryManualDeliver then
