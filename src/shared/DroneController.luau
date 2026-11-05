@@ -339,6 +339,27 @@ function DroneController:StartFlying()
 		camera.CameraSubject = self.rootPart
 	end
 
+	-- Asegurar que DeliveryManager esté activo para misiones y entregas
+	if not self.deliveryManager then
+		local DelivMod = ReplicatedStorage:FindFirstChild("DeliveryManager") :: ModuleScript?
+		if DelivMod then
+			local okReq, mod = pcall(function() return require(DelivMod) end)
+			if okReq and mod then
+				local okNew, inst = pcall(function() return mod.new() end)
+				if okNew and inst then
+					self.deliveryManager = inst
+					if (inst :: any).SetOnDeliveryCallback then
+						(inst :: any):SetOnDeliveryCallback(function(reward: number, padName: string)
+							if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName) end) end
+							if self.cargo then pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end) end
+						end)
+					end
+					print("[DroneController] DeliveryManager activado al iniciar vuelo.")
+				end
+			end
+		end
+	end
+
 	-- Vincular inputs de vuelo
 	self:BindInputs()
 

@@ -304,7 +304,7 @@ function DroneHUD.new(): HUDInstance
 	missionBox.Name = "MissionBox"
 	missionBox.Size = UDim2.fromOffset(240, 95)
 	missionBox.AnchorPoint = Vector2.new(1, 0)
-	missionBox.Position = UDim2.new(1, -35, 0, 25)
+	missionBox.Position = UDim2.new(1, -25, 0, 160)
 	missionBox.BackgroundColor3 = COLOR_BG
 	missionBox.BackgroundTransparency = 0.35
 	missionBox.BorderSizePixel = 0
