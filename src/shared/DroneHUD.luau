@@ -527,6 +527,8 @@ function DroneHUD.Update(
 	if landingProgress > 0 then
 		self.landingBar.Visible = true
 		self.landingFill.Size = UDim2.fromScale(landingProgress, 1)
+		self.warningLabel.Text = "[ZONA DETECTADA] ATERRIZANDO... O PULSA [G]"
+		self.warningLabel.TextColor3 = COLOR_NEON_YELLOW
 	else
 		self.landingBar.Visible = false
 	end

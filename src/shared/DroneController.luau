@@ -613,6 +613,12 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.Q          then self.inputState.turbo     = true
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = true
 		elseif k == Enum.KeyCode.V          then self.isFPV = not self.isFPV
+		elseif k == Enum.KeyCode.G          then
+			if self.deliveryManager and (self.deliveryManager :: any).TryManualDeliver then
+				pcall(function()
+					(self.deliveryManager :: any):TryManualDeliver(self.rootPart.Position, self.currentVelocity)
+				end)
+			end
 		end
 	end)
 

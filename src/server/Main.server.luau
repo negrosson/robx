@@ -47,6 +47,38 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	beacon.Shadows = true
 	beacon.Parent = ring
 
+	-- Haz de luz vertical hacia el cielo (faro holográfico visible desde toda la ciudad)
+	local skyBeam = Instance.new("Part")
+	skyBeam.Name = "HoloSkyBeam"
+	skyBeam.Size = Vector3.new(1.8, 160, 1.8)
+	skyBeam.Position = position + Vector3.new(0, 80, 0)
+	skyBeam.Material = Enum.Material.Neon
+	skyBeam.Color = primaryColor
+	skyBeam.Transparency = 0.65
+	skyBeam.CanCollide = false
+	skyBeam.Anchored = true
+	skyBeam.Parent = model
+
+	-- Letrero flotante holográfico en el helipuerto
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "PadHoloSign"
+	billboard.Size = UDim2.fromOffset(260, 50)
+	billboard.StudsOffset = Vector3.new(0, 7, 0)
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = 600
+	billboard.Parent = base
+
+	local signLabel = Instance.new("TextLabel")
+	signLabel.Size = UDim2.fromScale(1, 1)
+	signLabel.BackgroundTransparency = 1
+	signLabel.Font = Enum.Font.Code
+	signLabel.Text = string.format("◀ %s ▶\n[ZONA DE ATERRIZAJE]", name:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", ""):upper())
+	signLabel.TextColor3 = primaryColor
+	signLabel.TextSize = 13
+	signLabel.TextStrokeTransparency = 0.2
+	signLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	signLabel.Parent = billboard
+
 	local pillar = Instance.new("Part")
 	pillar.Name = "SupportPillar"
 	local pillarHeight = math.max(position.Y, 2)
@@ -243,20 +275,20 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local horizDistance = Vector3.new(dronePos.X - padPos.X, 0, dronePos.Z - padPos.Z).Magnitude
 	local vertDiff = dronePos.Y - padPos.Y
 
-	if horizDistance > 18 then
-		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero el dron está a %.1f studs del helipuerto (máx 18).", player.Name, horizDistance))
+	if horizDistance > 25 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero el dron está a %.1f studs del helipuerto (máx 25).", player.Name, horizDistance))
 		return
 	end
 
-	if vertDiff < -2 or vertDiff > 10 then
-		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero la altura del dron es inválida (diff: %.1f studs).", player.Name, vertDiff))
+	if vertDiff < -3 or vertDiff > 16 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero la altura del dron es inválida (diff: %.1f studs, rango: -3 a +16).", player.Name, vertDiff))
 		return
 	end
 
 	-- 3. Validar velocidad segura de aterrizaje
 	local droneSpeed = dronePart.AssemblyLinearVelocity.Magnitude
-	if droneSpeed > 20 then
-		warn(string.format("[Servidor ANTI-EXPLOIT] %s aterrizó a exceso de velocidad (%.1f studs/s, máx 20).", player.Name, droneSpeed))
+	if droneSpeed > 30 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s aterrizó a exceso de velocidad (%.1f studs/s, máx 30).", player.Name, droneSpeed))
 		return
 	end
 

@@ -109,7 +109,7 @@ local function enterDrone()
 		isPiloting = false
 		setBtn("[E] ERROR AL VOLAR - REINTENTA", 255, 80, 80)
 	else
-		dbg("Vuelo FPV activo! WASD=mover Space=subir Shift/Ctrl/C=bajar Q=turbo X=freno V=FPV")
+		dbg("Vuelo FPV activo! WASD=mover Space=subir Shift/C=bajar Q=turbo X=freno G=entregar V=FPV")
 	end
 end
 
