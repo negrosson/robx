@@ -1,16 +1,25 @@
 --!strict
 -- src/shared/DroneCargo.luau
--- Sistema de Contenedor y Carga Magnética con Haz Tractor
+-- Sistema de Contenedor y Carga Magnética con Haz Tractor + Inercia Dinámica Real
 local DroneCargo = {}
 DroneCargo.__index = DroneCargo
 
+-- Constantes de física de carga
+local INERTIA_ALPHA_DEFAULT = 0.040  -- α por defecto si el dron no especifica
+local EK_DETONATION_THRESHOLD = 4000  -- Joules (Ek = 0.5*M*v²) para detonar carga inestable
+local CARGO_MASS_DEFAULT    = 10     -- kg por defecto
+
 export type CargoInstance = {
-	rootPart: BasePart,
-	cargoModel: Model,
-	cargoBox: BasePart,
-	weld: WeldConstraint,
-	beams: { Beam },
-	isLoaded: boolean,
+	rootPart     : BasePart,
+	cargoModel   : Model,
+	cargoBox     : BasePart,
+	weld         : WeldConstraint,
+	beams        : { Beam },
+	isLoaded     : boolean,
+	-- NUEVO: propiedades de masa e inercia
+	cargoMass    : number,  -- kg del paquete actual
+	inertiaAlpha : number,  -- α para la fórmula VelocidadEfectiva
+	isUnstable   : boolean, -- carga inestable (detona en impacto fuerte)
 }
 
 local COLOR_CARGO_NEON = Color3.fromRGB(0, 255, 230)
@@ -92,6 +101,10 @@ function DroneCargo.new(dronePart: BasePart): CargoInstance
 		weld = weld,
 		beams = beams,
 		isLoaded = true,
+		-- NUEVO: estado de masa e inercia
+		cargoMass    = CARGO_MASS_DEFAULT,
+		inertiaAlpha = INERTIA_ALPHA_DEFAULT,
+		isUnstable   = false,
 	}
 
 	return setmetatable(self, DroneCargo) :: any
@@ -121,6 +134,76 @@ end
 function DroneCargo.Destroy(self: CargoInstance)
 	if self.cargoModel then
 		self.cargoModel:Destroy()
+	end
+end
+
+----------------------------------------------------------------------
+-- EXTENSIONES: MASA REAL E INERCIA DINÁMICA
+----------------------------------------------------------------------
+
+-- Configura la masa del paquete actual y si es inestable (detona en impacto fuerte)
+function DroneCargo.SetCargo(self: CargoInstance, massKg: number, inertiaAlpha: number, unstable: boolean?)
+	self.cargoMass    = math.max(0, massKg)
+	self.inertiaAlpha = math.max(0.001, inertiaAlpha)
+	self.isUnstable   = unstable or false
+
+	-- Cambio visual: carga inestable tiene neón ámbar de advertencia
+	local band = self.cargoModel:FindFirstChild("NeonBand") :: BasePart?
+	if band then
+		if self.isUnstable then
+			band.Color = Color3.fromRGB(255, 160, 0)  -- ámbar de peligro
+		else
+			band.Color = Color3.fromRGB(0, 255, 230)  -- cian estándar
+		end
+	end
+
+	print(string.format("[DroneCargo] Carga configurada: %.1f kg, α=%.3f, inestable=%s",
+		massKg, inertiaAlpha, tostring(self.isUnstable)))
+end
+
+-- Calcula la velocidad efectiva según la masa de la carga
+-- VelocidadEfectiva = VelocidadBase / (1 + (MasaCarga * InerciaAlpha))
+function DroneCargo.GetSpeedMultiplier(self: CargoInstance): number
+	if not self.isLoaded or self.cargoMass <= 0 then return 1.0 end
+	local factor = 1 + (self.cargoMass * self.inertiaAlpha)
+	return math.max(0.3, 1.0 / factor)  -- mínimo 30% de velocidad base
+end
+
+-- Evalúa energía cinética en impacto y detona si supera umbral (carga inestable)
+-- Llamado desde DroneController al detectar una colisión a alta velocidad
+-- Ek = 0.5 * MasaTotal * |velocidad|²
+function DroneCargo.EvaluateImpact(self: CargoInstance, droneMassKg: number, impactSpeed: number): boolean
+	if not self.isLoaded or not self.isUnstable then return false end
+
+	local totalMass = droneMassKg + self.cargoMass
+	local ek = 0.5 * totalMass * (impactSpeed * impactSpeed)
+
+	if ek >= EK_DETONATION_THRESHOLD then
+		warn(string.format("[DroneCargo] ¡DETONACIÓN! Ek=%.0f J > umbral %.0f J (masa=%.1f kg, v=%.1f studs/s)",
+			ek, EK_DETONATION_THRESHOLD, totalMass, impactSpeed))
+		self:Detonate()
+		return true
+	end
+	return false
+end
+
+-- Detonación de la carga: explosión en Workspace y destrucción del contenedor
+function DroneCargo.Detonate(self: CargoInstance)
+	local pos = self.cargoBox.Position
+
+	local explosion = Instance.new("Explosion")
+	explosion.Position       = pos
+	explosion.BlastRadius    = 18
+	explosion.BlastPressure  = 5e5
+	explosion.DestroyJointRadiusPercent = 0
+	explosion.ExplosionType  = Enum.ExplosionType.NoCraters
+	explosion.Parent         = workspace
+	game:GetService("Debris"):AddItem(explosion, 3)
+
+	self.isLoaded = false
+	self.isUnstable = false
+	if self.cargoModel then
+		game:GetService("Debris"):AddItem(self.cargoModel, 0.5)
 	end
 end
 

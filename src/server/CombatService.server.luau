@@ -1,0 +1,464 @@
+--!strict
+-- src/server/CombatService.server.luau
+-- Servicio de Combate Server-Side — Validación de Impactos, Gestión Térmica y EMP
+-- Cyber Delivery Tycoon — Autoridad física 100% en el servidor
+print("[CombatService] Iniciando servicio de combate...")
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+local Debris            = game:GetService("Debris")
+local Workspace         = game:GetService("Workspace")
+
+-- Módulos compartidos (src/shared/ → ReplicatedStorage)
+local DroneWeapons = require(ReplicatedStorage:WaitForChild("DroneWeapons", 8) :: ModuleScript)
+
+----------------------------------------------------------------------
+-- CONSTANTES
+----------------------------------------------------------------------
+local MAX_HEAT_THRESHOLD   = 100  -- % a partir del cual se activa EMP
+local EMP_DURATION         = 2.0  -- segundos en caída libre tras sobrecalentamiento
+local DOT_TICK_RATE        = 0.5  -- segundos entre ticks de daño térmico continuo
+local IMPULSE_DECAY        = 0.6  -- duración en s del desestabilizador de orientación
+local EXPLOSION_RADIUS_SCALE = 0.15  -- radio de explosión = daño * escala
+
+-- Tabla de drones activos rastreados por el servidor {[BasePart]: DroneState}
+type DroneState = {
+	part           : BasePart,
+	health         : number,
+	maxHealth      : number,
+	heat           : number,
+	maxHeat        : number,
+	heatCoolingRate: number,
+	armorReduction : number,
+	empResistance  : number,
+	isEMPed        : boolean,
+	empEndTime     : number,
+	dotEndTime     : number,
+	dotDamage      : number,
+	liftReduction  : number,
+	liftEndTime    : number,
+	owner          : Player?,
+}
+
+local activeDrones: { [BasePart]: DroneState } = {}
+
+----------------------------------------------------------------------
+-- RemoteEvents (via NetworkEvents o búsqueda directa)
+----------------------------------------------------------------------
+local function getRemote(name: string): RemoteEvent
+	local ev = ReplicatedStorage:FindFirstChild(name) :: RemoteEvent?
+	if not ev then
+		ev = ReplicatedStorage:WaitForChild(name, 5) :: RemoteEvent?
+	end
+	assert(ev, "[CombatService] RemoteEvent no encontrado: " .. name)
+	return ev
+end
+
+-- Cliente → Servidor: Solicitar disparo validado
+local onFireWeaponEvent     = getRemote("OnFireWeapon")
+-- Servidor → Cliente: Notificar daño recibido (HUD)
+local onDamagedEvent        = getRemote("OnDamageTaken")
+-- Servidor → Cliente: Notificar estado EMP
+local onEMPEvent            = getRemote("OnEMPActivated")
+-- Servidor → Cliente: Actualizar datos de calor para HUD
+local onHeatUpdateEvent     = getRemote("OnHeatUpdate")
+
+-- Crear eventos si no existen
+local function ensureRemote(name: string): RemoteEvent
+	local ev = ReplicatedStorage:FindFirstChild(name) :: RemoteEvent?
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = name
+		ev.Parent = ReplicatedStorage
+	end
+	return ev :: RemoteEvent
+end
+ensureRemote("OnFireWeapon")
+ensureRemote("OnDamageTaken")
+ensureRemote("OnEMPActivated")
+ensureRemote("OnHeatUpdate")
+
+----------------------------------------------------------------------
+-- API PÚBLICA — Registrar un dron en el sistema de combate
+----------------------------------------------------------------------
+function CombatService_Register(
+	part          : BasePart,
+	maxHealth     : number,
+	maxHeat       : number,
+	heatCooling   : number,
+	armorReduction: number,
+	empResistance : number,
+	owner         : Player?
+)
+	activeDrones[part] = {
+		part           = part,
+		health         = maxHealth,
+		maxHealth      = maxHealth,
+		heat           = 0,
+		maxHeat        = maxHeat,
+		heatCoolingRate = heatCooling,
+		armorReduction = armorReduction,
+		empResistance  = empResistance,
+		isEMPed        = false,
+		empEndTime     = 0,
+		dotEndTime     = 0,
+		dotDamage      = 0,
+		liftReduction  = 0,
+		liftEndTime    = 0,
+		owner          = owner,
+	}
+	print(string.format("[CombatService] Dron registrado: %s (HP:%d / Heat:%d)", part.Name, maxHealth, maxHeat))
+end
+
+function CombatService_Unregister(part: BasePart)
+	activeDrones[part] = nil
+end
+
+----------------------------------------------------------------------
+-- LÓGICA INTERNA
+----------------------------------------------------------------------
+
+-- Verifica línea de visión entre dos posiciones (ignora cristales)
+local function hasLineOfSight(origin: Vector3, target: Vector3, exclude: { Instance }): boolean
+	local direction = target - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = exclude
+
+	local result = Workspace:Raycast(origin, direction, params)
+	if not result then return true end
+
+	-- Permitir atravesar partes de baja densidad (cristal, neon)
+	local hitMat = result.Instance.Material
+	if hitMat == Enum.Material.Glass or hitMat == Enum.Material.Neon then
+		return true
+	end
+	return false
+end
+
+-- Aplica daño a un DroneState con mitigación de blindaje
+local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any)
+	local mitigation = math.clamp(state.armorReduction, 0, 0.90)
+	local finalDmg = math.max(1, rawDamage * (1 - mitigation))
+	state.health = math.max(0, state.health - finalDmg)
+
+	-- Notificar al dueño del dron
+	if state.owner then
+		onDamagedEvent:FireClient(state.owner, {
+			damage    = finalDmg,
+			rawDamage = rawDamage,
+			weapon    = weaponSpec and weaponSpec.name or "Unknown",
+			healthPct = state.health / state.maxHealth,
+		})
+	end
+
+	-- Destruir dron al llegar a 0 HP
+	if state.health <= 0 then
+		destroyDrone(state)
+	end
+end
+
+-- Aplica calor al dron, considera resistencia EMP
+local function applyHeat(state: DroneState, rawHeat: number)
+	local resistance = math.clamp(state.empResistance, 0, 0.90)
+	local effectiveHeat = rawHeat * (1 - resistance)
+	state.heat = math.min(state.maxHeat, state.heat + effectiveHeat)
+
+	-- Verificar umbral EMP
+	local heatPct = state.heat / state.maxHeat * 100
+	if heatPct >= MAX_HEAT_THRESHOLD and not state.isEMPed then
+		triggerEMP(state)
+	end
+
+	-- Notificar HUD de calor
+	if state.owner then
+		onHeatUpdateEvent:FireClient(state.owner, state.heat / state.maxHeat)
+	end
+end
+
+-- Genera explosión física al destruir un dron
+function destroyDrone(state: DroneState)
+	local part = state.part
+	if not part or not part.Parent then return end
+
+	local explosion = Instance.new("Explosion")
+	explosion.Position       = part.Position
+	explosion.BlastRadius    = 12
+	explosion.BlastPressure  = 3e5
+	explosion.DestroyJointRadiusPercent = 0  -- no destruye el mundo, solo aplica fuerza
+	explosion.ExplosionType  = Enum.ExplosionType.NoCraters
+	explosion.Parent         = Workspace
+	Debris:AddItem(explosion, 3)
+
+	print(string.format("[CombatService] Dron destruido: %s", part.Name))
+	activeDrones[part] = nil
+
+	-- Destruir la parte física del dron enemigo tras breve pausa
+	task.delay(0.5, function()
+		if part and part.Parent then
+			part:Destroy()
+		end
+	end)
+end
+
+-- Activa estado EMP: deshabilita LinearVelocity del dron 2 segundos
+function triggerEMP(state: DroneState)
+	state.isEMPed  = true
+	state.empEndTime = os.clock() + EMP_DURATION
+	state.heat     = state.maxHeat  -- fijar al máximo
+
+	local part = state.part
+	if not part or not part.Parent then return end
+
+	local lv = part:FindFirstChild("FlightVelocity") :: LinearVelocity?
+	local ao = part:FindFirstChild("FlightOrientation") :: AlignOrientation?
+
+	if lv then lv.Enabled = false end
+	if ao then ao.Enabled = false end
+
+	-- Notificar cliente del EMP
+	if state.owner then
+		onEMPEvent:FireClient(state.owner, EMP_DURATION)
+	end
+
+	print(string.format("[CombatService] EMP activado en %s — caída libre %.1fs", part.Name, EMP_DURATION))
+
+	task.delay(EMP_DURATION, function()
+		if activeDrones[part] then
+			state.isEMPed = false
+			state.heat    = state.maxHeat * 0.8  -- calor residual al recuperarse
+			if lv and lv.Parent then lv.Enabled = true end
+			if ao and ao.Parent then ao.Enabled = true end
+			print(string.format("[CombatService] Sistemas restaurados en %s", part.Name))
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- MANEJADOR DE DISPARO (Cliente → Servidor)
+----------------------------------------------------------------------
+-- Formato del request: { weaponId, originCFrame, targetPosition, targetPart? }
+onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
+	if typeof(request) ~= "table" then return end
+
+	local weaponId      = request.weaponId
+	local originPos     = request.origin        -- Vector3
+	local targetPos     = request.target        -- Vector3
+	local targetPart    = request.targetPart    -- BasePart? (opcional)
+
+	if typeof(weaponId) ~= "string" then return end
+	if typeof(originPos) ~= "Vector3" then return end
+	if typeof(targetPos) ~= "Vector3" then return end
+
+	local weaponSpec = DroneWeapons.ById[weaponId]
+	if not weaponSpec then
+		warn("[CombatService] Arma desconocida:", weaponId)
+		return
+	end
+
+	-- 1. Validar distancia máxima (anti-exploit de rango)
+	local distance = (targetPos - originPos).Magnitude
+	if distance > weaponSpec.range * 1.1 then  -- 10% de tolerancia de red
+		warn(string.format("[CombatService ANTI-EXPLOIT] %s disparó fuera de rango (%.0f > %.0f studs)", player.Name, distance, weaponSpec.range))
+		return
+	end
+
+	-- 2. Validar línea de visión (hitscan y microondas)
+	local shooterDrone: BasePart? = nil
+	for part, state in pairs(activeDrones) do
+		if state.owner == player then
+			shooterDrone = part
+			break
+		end
+	end
+
+	local excludeList: { Instance } = {}
+	if shooterDrone then table.insert(excludeList, shooterDrone) end
+	local char = player.Character
+	if char then table.insert(excludeList, char) end
+
+	if weaponSpec.projectileSpeed == 0 then  -- hitscan / rayo
+		if not hasLineOfSight(originPos, targetPos, excludeList) then
+			warn(string.format("[CombatService] %s — Sin línea de visión para %s", player.Name, weaponId))
+			return
+		end
+	end
+
+	-- 3. Aplicar calor al PORTADOR
+	if shooterDrone then
+		local shooterState = activeDrones[shooterDrone]
+		if shooterState then
+			applyHeat(shooterState, weaponSpec.heatGenerated)
+		end
+	end
+
+	-- 4. Procesar impacto en el objetivo (si es un dron registrado)
+	if targetPart and typeof(targetPart) == "Instance" then
+		local targetState = activeDrones[targetPart :: BasePart]
+		if targetState then
+			-- Calcular daño con blindaje
+			applyDamage(targetState, weaponSpec.damage, weaponSpec)
+
+			-- Calor en el objetivo
+			applyHeat(targetState, weaponSpec.heatOnTarget)
+
+			-- Efectos secundarios
+			local now = os.clock()
+			for _, effect in ipairs(weaponSpec.effects) do
+				if effect.type == "dot" then
+					targetState.dotDamage  = effect.value
+					targetState.dotEndTime = now + effect.duration
+
+				elseif effect.type == "lift_reduction" then
+					targetState.liftReduction = effect.value
+					targetState.liftEndTime   = now + effect.duration
+
+				elseif effect.type == "impulse" then
+					-- Aplicar impulso físico para desestabilizar AlignOrientation
+					local ao = targetPart:FindFirstChild("FlightOrientation") :: AlignOrientation?
+					if ao then
+						-- Deshabilitar brevemente para simular desestabilización
+						ao.Enabled = false
+						-- Aplicar impulso en la dirección de impacto
+						local impactDir = (targetPart.Position - originPos).Unit
+						targetPart.AssemblyLinearVelocity += impactDir * effect.value
+						task.delay(IMPULSE_DECAY, function()
+							if ao and ao.Parent then ao.Enabled = true end
+						end)
+					end
+
+				elseif effect.type == "heat_inject" then
+					applyHeat(targetState, effect.value)
+
+				elseif effect.type == "emp" and targetState.heat >= targetState.maxHeat then
+					triggerEMP(targetState)
+				end
+			end
+		end
+	end
+
+	-- 5. Misil: generar proyectil físico en el servidor
+	if weaponSpec.damageType == "missile" and weaponSpec.projectileSpeed > 0 then
+		local missileVFX = Instance.new("Part")
+		missileVFX.Name        = "CyberMissile"
+		missileVFX.Size        = Vector3.new(0.3, 0.3, 1.5)
+		missileVFX.Material    = Enum.Material.Neon
+		missileVFX.Color       = weaponSpec.projectileColor
+		missileVFX.CanCollide  = false
+		missileVFX.Massless    = true
+		missileVFX.CFrame      = CFrame.lookAt(originPos, targetPos)
+		missileVFX.Parent      = Workspace
+		Debris:AddItem(missileVFX, 4)
+
+		-- Mover hacia el objetivo (guiado simple, Bézier en cliente para VFX)
+		local startPos = originPos
+		local endPos   = targetPos
+		local duration = distance / weaponSpec.projectileSpeed
+		local elapsed  = 0
+
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function(dt)
+			elapsed += dt
+			local t = math.clamp(elapsed / duration, 0, 1)
+
+			-- Curva Bézier cuadrática con punto de control elevado
+			local ctrl = (startPos + endPos) / 2 + Vector3.new(0, 15, 0)
+			local pos = (1 - t)^2 * startPos + 2*(1-t)*t * ctrl + t^2 * endPos
+			missileVFX.CFrame = CFrame.lookAt(pos, endPos)
+
+			if t >= 1 then
+				conn:Disconnect()
+				-- Detonar al llegar
+				local exp = Instance.new("Explosion")
+				exp.Position      = endPos
+				exp.BlastRadius   = 15
+				exp.BlastPressure = 2e5
+				exp.DestroyJointRadiusPercent = 0
+				exp.Parent = Workspace
+				Debris:AddItem(exp, 2)
+				if missileVFX.Parent then missileVFX:Destroy() end
+			end
+		end)
+	end
+end)
+
+----------------------------------------------------------------------
+-- BUCLE DE SIMULACIÓN — Actualiza DoT, enfriamiento y EMP a ~20 Hz
+----------------------------------------------------------------------
+local SIMULATION_RATE = 0.05  -- 20 Hz
+local accumulator = 0
+
+RunService.Heartbeat:Connect(function(dt: number)
+	accumulator += dt
+	if accumulator < SIMULATION_RATE then return end
+	accumulator = 0
+
+	local now = os.clock()
+
+	for part, state in pairs(activeDrones) do
+		-- Verificar que la part sigue existiendo
+		if not part or not part.Parent then
+			activeDrones[part] = nil
+			continue
+		end
+
+		-- 1. Enfriamiento natural de calor
+		if state.heat > 0 and not state.isEMPed then
+			state.heat = math.max(0, state.heat - state.heatCoolingRate * SIMULATION_RATE)
+			if state.owner then
+				onHeatUpdateEvent:FireClient(state.owner, state.heat / state.maxHeat)
+			end
+		end
+
+		-- 2. Daño continuo (DoT térmico)
+		if now < state.dotEndTime and state.dotDamage > 0 then
+			applyDamage(state, state.dotDamage * SIMULATION_RATE, nil)
+		end
+
+		-- 3. Expirar reducción de sustentación
+		if now >= state.liftEndTime then
+			state.liftReduction = 0
+		end
+
+		-- 4. Expirar EMP (ya manejado con task.delay, esto es seguridad extra)
+		if state.isEMPed and now >= state.empEndTime then
+			state.isEMPed = false
+		end
+	end
+end)
+
+----------------------------------------------------------------------
+-- EXPONER API GLOBALMENTE PARA EnemyAIService
+----------------------------------------------------------------------
+-- (En Roblox, los scripts de servidor se comunican directamente por referencia de módulo,
+--  pero CombatService es un Script, no un ModuleScript. Usamos _G como bus interno de servidor.)
+_G.CombatService = {
+	Register   = CombatService_Register,
+	Unregister = CombatService_Unregister,
+	ApplyDamage = function(part: BasePart, damage: number)
+		local state = activeDrones[part]
+		if state then applyDamage(state, damage, nil) end
+	end,
+	ApplyHeat = function(part: BasePart, heat: number)
+		local state = activeDrones[part]
+		if state then applyHeat(state, heat) end
+	end,
+	GetLiftReduction = function(part: BasePart): number
+		local state = activeDrones[part]
+		if state then return state.liftReduction end
+		return 0
+	end,
+	GetHeatPct = function(part: BasePart): number
+		local state = activeDrones[part]
+		if state then return state.heat / state.maxHeat end
+		return 0
+	end,
+	IsEMPed = function(part: BasePart): boolean
+		local state = activeDrones[part]
+		if state then return state.isEMPed end
+		return false
+	end,
+}
+
+print("[CombatService] Servicio de combate activo. Esperando conexiones...")

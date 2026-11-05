@@ -77,3 +77,4 @@ function NetworkEvents.Get(eventName: string): RemoteEvent
 end
 
 return NetworkEvents
+

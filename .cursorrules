@@ -1,0 +1,113 @@
+# .cursorrules — Cyber Delivery Tycoon (Roblox / Luau)
+
+## 1. Visión del Proyecto e Identidad Visual
+- **Título del Proyecto:** Cyber Delivery Tycoon.
+- **Concepto Central:** Simulador táctico y tycoon de transporte en una megalópolis vertical cyberpunk. El jugador permanece en tierra como operador y pilota drones de alto rendimiento mediante un enlace neuronal con gafas FPV (`CyberGoggles`), enfrentándose a contratos contrarreloj, degradación de señal por obstáculos densos, piratería/ataques hostiles y físicas reales de inercia y peso de carga.
+- **Paleta Visual Obligatoria:** Estética cyberpunk industrial de alto contraste:
+  - Base: Negro Carbón (`#0D0D0D` / Metal / Carbon Fiber).
+  - Acentos de Carrocería: Blanco Puro Cerámico (`#FFFFFF`).
+  - Iluminación e Interfaz: Rojo Neón luminiscente (`#FF003F` / Neon Material).
+- **Inspiración de Autor (Lore & Diseño):** Cada dron o inteligencia artificial homenajea a pioneros reales de la aeronáutica, radio y cibernética mediante designaciones industriales codificadas, sin usar nombres literales directos.
+
+---
+
+## 2. Entorno Tecnológico y Configuración de Rojo CLI
+- **Lenguaje:** Luau en modo estricto obligatorio (`--!strict` en la primera línea de cada script o módulo).
+- **Sincronización:** Rojo CLI 7.x ejecutándose en `localhost:34872` sincronizado en vivo con Roblox Studio.
+- **Mapeo de Directorios (`default.project.json`):**
+  - `src/client/` -> Mapeado directamente a `StarterPlayer.StarterPlayerScripts`.
+  - `src/server/` -> Mapeado directamente a `ServerScriptService`.
+  - `src/shared/` -> Mapeado directamente a `ReplicatedStorage`.
+- **REGLA DE NOMENCLATURA CRÍTICA DE ARCHIVOS:**
+  - NUNCA nombrar archivos como `init.server.luau` o `init.client.luau` en las raíces de los servicios. Esto causa que Rojo cree instancias duplicadas de servicios en el `DataModel` de Roblox.
+  - Los scripts de arranque deben nombrarse obligatoriamente `Main.server.luau` y `Main.client.luau`.
+
+---
+
+## 3. Arquitectura de Módulos y Responsabilidades (`src/`)
+
+El proyecto debe mantener un desacoplamiento estricto de responsabilidades, divididas en la siguiente topología de archivos:
+
+### Cliente (`src/client/`)
+- `Main.client.luau`: Punto de entrada del cliente; inicializa el visor neuronal y enlaza el dron local.
+- `VisorController.luau`: Maneja la cámara en tercera persona/FPV con amortiguación elástica (`CFrame:Lerp()`), ajuste dinámico de FOV según la aceleración y renderizado de *scanlines* de interferencia.
+
+### Servidor (`src/server/`)
+- `Main.server.luau`: Valida la carga del jugador y otorga la propiedad física exclusiva del dron mediante `SetNetworkOwner(player)`.
+- `CombatService.server.luau`: Valida impactos por *Raycast*, aplica mitigación por blindaje, gestiona la sobrecarga térmica por microondas (`EMP`), estados de quemadura y explosiones físicas (`Explosion`).
+- `EnemyAIService.server.luau`: Ejecuta la simulación de enemigos a 10 Hz mediante conductas de dirección 3D (*Steering Behaviors*), evitando el coste computacional de `PathfindingService`.
+- `DeliveryManager.server.luau`: Autoritativo al 100%. Valida entregas por coordenadas, temporizadores de contratos y pagos de Cyber-Créditos.
+
+### Compartido (`src/shared/`)
+- `DroneController.luau`: Controlador de vuelo orientado a objetos mediante `LinearVelocity` y `AlignOrientation`. Captura de inputs (WASD, Espacio, Shift) relativos a la orientación de `Workspace.CurrentCamera`.
+- `DroneCatalog.luau`: Fichas técnicas completas de drones con estadísticas de vuelo, blindaje, capacidad de carga, disipación de calor y bahías de armamento.
+- `DroneWeapons.luau`: Definición de proyectiles, cadencia, velocidad de boca, generación de calor e impactos de las 4 familias de armas.
+- `EnemyTypes.luau`: Arquetipos de enemigos, radios de detección, vida base, tipos de agresión y recompensas.
+- `CyberGoggles.luau`: Máquina de estados (`IdleHuman` <-> `Piloting`), cálculo de atenuación de señal por distancia euclidiana y muros de hormigón.
+- `DroneCargo.luau`: Cálculo de masa real, inercia acumulada, enganche magnético y evaluación de colisiones destructivas según energía cinética ($E_k$).
+- `DroneHUD.luau`: Telemetría del visor (retícula reactiva, horizonte artificial, velocímetro, integridad del dron y barra de calor).
+- `DroneAudio.luau`: Modulación continua de pitch/volumen de turbinas según velocidad física y alertas audibles.
+- `DroneVFX.luau`: Estelas de neón rojo, partículas de plasma, chispas por fricción con rascacielos y detonaciones volumétricas.
+
+---
+
+## 4. Físicas, Red y Jerarquía de Modelos 3D
+
+1. **Restricciones Modernas (Sin Excepciones):**
+   - PROHIBIDO utilizar clases heredadas obsoletas: `BodyVelocity`, `BodyGyro`, `BodyPosition`, `BodyAngularVelocity` o `RocketPropulsion`.
+   - UTILIZAR EXCLUSIVAMENTE Constraints modernas: `LinearVelocity` (con `ActuatorRelativeTo.World`), `AlignOrientation` (con `OneAttachment`), `VectorForce`, `SpringConstraint` y `WeldConstraint`.
+2. **Propiedad de Red (`NetworkOwnership`):**
+   - Todo control físico local operado por el cliente requiere que el servidor ejecute `dronePart:SetNetworkOwner(player)`. De lo contrario, las fuerzas locales son anuladas por el servidor.
+3. **Jerarquía del Modelo 3D (Hitbox Raíz):**
+   - Todo dron debe construirse alrededor de un `Model` cuya `PrimaryPart` sea `DroneRoot`.
+   - `DroneRoot`: Bloque invisible (`Transparency = 1`), `Anchored = false`, `CanCollide = true`. Contiene el `FlightAttachment` y el `CargoAttachment`.
+   - Componentes decorativos (`BodyMesh`, armas, tiras de neón, alerones): Deben tener `Massless = true`, `CanCollide = false` y estar fijados rígidamente a `DroneRoot` mediante `WeldConstraint`.
+   - Rotores/Turbinas: Mallas independientes cuyos pivotes geométricos estén perfectamente centrados para permitir rotación procedimental en bucle.
+
+---
+
+## 5. Especificaciones de Mecánicas y Diseño de Juego
+
+### A. Progresión de Drones (Homenaje a Pioneros)
+- **Tel-98 "Teleautomaton" (Nikola Tesla - 1898):** Tier 1. Quad ligero experimental. Resistente a interferencias electromagnéticas leves; 1 anclaje de arma ligero.
+- **Oehm-24 "Multicross" (Étienne Œhmichen - 1924):** Tier 2. Quad clásico equilibrado; alta respuesta vertical para maniobrar en cañones urbanos estrechos.
+- **Breg-07 "Gyro-Wing" (Louis Breguet - 1907):** Tier 2. Rotores basculantes aerodinámicos; velocidad punta elevada e inclinación agresiva de crucero.
+- **Skor-39 "Heavy-Lift" (Igor Sikorsky - 1939):** Tier 3. Hexacóptero industrial blindado con reducción pasiva de daño del 25%; especializado en contenedores pesados.
+- **W-NER "Daemon-Link" (Norbert Wiener - Cibernética):** Tier 4. Vuelo por propulsión antigravedad/iónica sin rotores mecánicos; enlace de señal sin latencia y máxima disipación de calor.
+
+### B. Familias de Armamento Cyberpunk
+- **Térmicas / Fuego ("Magma-Spike"):** Lanza-plasma que aplica daño periódico (*DoT*) durante 3.5 segundos y reduce la sustentación vertical de la víctima por turbulencia térmica.
+- **Cinéticas / Gauss ("Rail-Driver"):** Disparo electromagnético hipersónico (*Hitscan* vía `Raycast`). Traspasa superficies delgadas y aplica un torque de desestabilización física inmediata en el `AlignOrientation` del blanco.
+- **Smart Missiles ("Smart Gyro-Lock"):** Misiles guiados que fijan objetivos dentro del cono visual del visor y corrigen su trayectoria en el aire mediante interpolación Bézier.
+- **Ciberguerra / Microondas ("Synapse Overheat"):** Rayo de microondas de alta frecuencia que satura la barra de calor del dron rival. Al alcanzar el 100%, induce un estado `Overheated/EMP` desactivando motores (`LinearVelocity.Enabled = false`) durante 2 segundos en caída libre.
+
+### C. Facciones Hostiles (IA 3D a 10 Hz)
+- **Scav-Gnats (Enjambre Chatarrero):** Drones pequeños que atacan en grupo. Su táctica es la embestida física directa (*Ramming*) para desestabilizar el dron del jugador y hacerle soltar el paquete.
+- **Aegis-44 (Torreta Estacionaria):** Centinelas en cornisas de rascacielos corporativos con cono de 120°. Calculan intercepción balística anticipada si el jugador cruza sin autorización.
+- **Kuroshio V (Interceptores Corporativos):** Drones de seguridad que orbitan lateralmente a 100 studs aplicando fuego de microondas continuo para forzar el sobrecalentamiento del jugador.
+
+### D. Físicas de Carga e Inercia Dinámica
+- La masa de los paquetes modifica la velocidad de vuelo:
+  $$\text{VelocidadEfectiva} = \frac{\text{VelocidadBase}}{1 + (\text{MasaCarga} \times \alpha)}$$
+- Los paquetes pesados aumentan la distancia de frenado y el balanceo físico.
+- Las colisiones violentas se evalúan según energía cinética ($E_k = \frac{1}{2} M_{\text{total}} \|\vec{v}\|^2$). Si el impacto supera el umbral crítico en cargas inestables, el paquete detona destruyendo el dron.
+
+### E. Gafas Neurales y Calidad de Señal
+- La señal de enlace $S \in [0, 1]$ se degrada por distancia euclidiana y muros de hormigón:
+  $$S = \text{clamp}\left(1 - \frac{\text{distancia}}{D_{\text{max}}} - (N_{\text{muros}} \times 0.15),\, 0,\, 1\right)$$
+- Si $S < 0.3$: Se inyecta ruido visual estático en pantalla, el sonido tartamudea y se aplica un búfer de retardo artificial de entrada (*input lag*) en los controles.
+
+---
+
+## 6. Estándares de Codificación en Luau y Limpieza de Memoria
+
+1. **Tipado Estricto:** Toda función pública o método debe tipar sus parámetros de entrada y retorno (`--!strict`).
+2. **Convenciones de Nomenclatura:**
+   - Servicios, Clases y Módulos: `PascalCase` (ej. `DroneController`, `DeliveryManager`).
+   - Métodos y funciones públicas: `PascalCase` (ej. `SetNetworkOwner()`, `AttachCargo()`).
+   - Variables locales y funciones privadas: `camelCase` (ej. `currentSpeed`, `calculateLead()`).
+   - Constantes de configuración: `SCREAMING_SNAKE_CASE` (ej. `MAX_HEAT_THRESHOLD`).
+3. **Prevención de Fugas de Memoria (Patrón Cleaner):**
+   - Todo módulo o clase que escuche eventos continuos (`RenderStepped`, `Heartbeat`, `InputBegan`, `RemoteEvent`) debe almacenar sus conexiones en una tabla interna y disponer de un método `:Destroy()` explícito que desconecte cada `RBXScriptConnection` al destruir la entidad o desmontar el dron.
+4. **Respeto a la Arquitectura Existente:**
+   - No rehacer desde cero módulos existentes (`DroneController.luau`, `DroneCargo.luau`, etc.); extender sus interfaces y métodos respetando las convenciones establecidas.
