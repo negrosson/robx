@@ -1,0 +1,79 @@
+--!strict
+-- src/shared/NetworkEvents.luau
+-- Gestor Centralizado de Eventos de Red (RemoteEvents) para Cyber Delivery Tycoon
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+
+local NetworkEvents = {}
+
+-- Nombres tipados de eventos de red
+NetworkEvents.Names = {
+	DroneFlightState   = "DroneFlightState",
+	ClaimDelivery      = "DeliveryCompleted",  -- Petición de entrega del cliente
+	DeliveryConfirmed  = "DeliveryConfirmed",  -- Confirmación validada por servidor
+	DroneDestroyed     = "DroneDestroyed",
+}
+
+local FOLDER_NAME = "CyberNetworkEvents"
+
+-- Inicializa todos los eventos en el servidor (llamado al arrancar Main.server.luau)
+function NetworkEvents.Init(): Folder
+	local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME) :: Folder?
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = FOLDER_NAME
+		folder.Parent = ReplicatedStorage
+	end
+
+	for _, eventName in pairs(NetworkEvents.Names) do
+		-- Evento en carpeta dedicada
+		local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
+		if not ev then
+			ev = Instance.new("RemoteEvent")
+			ev.Name = eventName
+			ev.Parent = folder
+		end
+
+		-- Evento espejo en la raíz de ReplicatedStorage para compatibilidad con código existente
+		local rootEv = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
+		if not rootEv then
+			local alias = Instance.new("RemoteEvent")
+			alias.Name = eventName
+			alias.Parent = ReplicatedStorage
+		end
+	end
+
+	return folder
+end
+
+-- Obtiene un RemoteEvent de forma segura (funciona en Cliente y Servidor)
+function NetworkEvents.Get(eventName: string): RemoteEvent
+	if RunService:IsServer() then
+		local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME) :: Folder?
+		if not folder then
+			folder = NetworkEvents.Init()
+		end
+		local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
+		if not ev then
+			ev = Instance.new("RemoteEvent")
+			ev.Name = eventName
+			ev.Parent = folder
+		end
+		return ev
+	else
+		-- Cliente: buscar con timeout en la carpeta central
+		local folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 8) :: Folder?
+		if folder then
+			local ev = folder:WaitForChild(eventName, 5) :: RemoteEvent?
+			if ev then return ev end
+		end
+
+		-- Fallback a la raíz de ReplicatedStorage
+		local rootEv = ReplicatedStorage:WaitForChild(eventName, 5) :: RemoteEvent?
+		if rootEv then return rootEv end
+
+		error(string.format("[NetworkEvents] No se pudo encontrar el RemoteEvent '%s'", eventName))
+	end
+end
+
+return NetworkEvents

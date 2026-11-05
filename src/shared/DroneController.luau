@@ -118,9 +118,17 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 	end
 
 	-- 3. RemoteEvent del servidor
-	local flightStateEvent = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
-	if not flightStateEvent then
-		flightStateEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 8) :: RemoteEvent?
+	local flightStateEvent: RemoteEvent? = nil
+	local okNet, NetworkEvents = pcall(function()
+		return require(script.Parent:WaitForChild("NetworkEvents", 5) :: ModuleScript)
+	end)
+	if okNet and NetworkEvents then
+		flightStateEvent = (NetworkEvents :: any).Get((NetworkEvents :: any).Names.DroneFlightState)
+	else
+		flightStateEvent = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
+		if not flightStateEvent then
+			flightStateEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 5) :: RemoteEvent?
+		end
 	end
 	if flightStateEvent then
 		print("[DroneController] DroneFlightState RemoteEvent OK")
@@ -610,6 +618,34 @@ function DroneController:UnbindInputs()
 	self.inputState.down     = false
 	self.inputState.turbo    = false
 	self.inputState.brake    = false
+end
+
+----------------------------------------------------------------------
+-- DESTRUCTOR Y LIMPIEZA UNIFICADA DE RECURSOS
+----------------------------------------------------------------------
+function DroneController:Destroy()
+	self:StopFlying()
+	if self.hud and self.hud.Destroy then
+		pcall(function() self.hud:Destroy() end)
+		self.hud = nil
+	end
+	if self.audio and self.audio.Destroy then
+		pcall(function() self.audio:Destroy() end)
+		self.audio = nil
+	end
+	if self.vfx and self.vfx.Destroy then
+		pcall(function() self.vfx:Destroy() end)
+		self.vfx = nil
+	end
+	if self.cargo and self.cargo.Destroy then
+		pcall(function() self.cargo:Destroy() end)
+		self.cargo = nil
+	end
+	if self.deliveryManager and self.deliveryManager.Destroy then
+		pcall(function() self.deliveryManager:Destroy() end)
+		self.deliveryManager = nil
+	end
+	print("[DroneController] Instancia destruida y recursos liberados.")
 end
 
 return DroneController

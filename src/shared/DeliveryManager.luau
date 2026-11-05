@@ -1,8 +1,10 @@
 --!strict
 -- src/shared/DeliveryManager.luau
--- Gestor de Misiones, Detección de Aterrizaje y Despacho de Entregas
+-- Gestor de Misiones, Detección de Aterrizaje y Despacho de Entregas con Validación
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
+local Workspace         = game:GetService("Workspace")
+
+local NetworkEvents = require(script.Parent:WaitForChild("NetworkEvents", 5) :: ModuleScript)
 
 local DeliveryManager = {}
 DeliveryManager.__index = DeliveryManager
@@ -20,12 +22,15 @@ export type ManagerInstance = {
 	currentTargetIndex: number,
 	touchdownTimer: number,
 	isLanded: boolean,
-	deliveryEvent: RemoteEvent,
+	claimEvent: RemoteEvent,
+	confirmedEvent: RemoteEvent,
+	confirmedConn: RBXScriptConnection?,
 	onDeliveryCallback: ((reward: number, padName: string) => ())?,
 }
 
 function DeliveryManager.new(): ManagerInstance
-	local deliveryEvent = ReplicatedStorage:WaitForChild("DeliveryCompleted", 10) :: RemoteEvent
+	local claimEvent = NetworkEvents.Get(NetworkEvents.Names.ClaimDelivery)
+	local confirmedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryConfirmed)
 	local padsFolder = Workspace:WaitForChild("LandingPads", 10) :: Folder?
 
 	local targets: { DeliveryTarget } = {}
@@ -63,13 +68,25 @@ function DeliveryManager.new(): ManagerInstance
 		currentTargetIndex = 1,
 		touchdownTimer = 0,
 		isLanded = false,
-		deliveryEvent = deliveryEvent,
+		claimEvent = claimEvent,
+		confirmedEvent = confirmedEvent,
+		confirmedConn = nil,
 		onDeliveryCallback = nil,
 	}
 
 	if #targets > 1 then
 		self.currentTargetIndex = 2
 	end
+
+	-- Escuchar confirmación validada del servidor
+	self.confirmedConn = confirmedEvent.OnClientEvent:Connect(function(padName: string, reward: number)
+		local currentTarget = self.targets[self.currentTargetIndex]
+		local displayName = if currentTarget and currentTarget.name == padName then currentTarget.displayName else padName
+
+		if self.onDeliveryCallback then
+			self.onDeliveryCallback(reward, displayName)
+		end
+	end)
 
 	return setmetatable(self, DeliveryManager) :: any
 end
@@ -145,14 +162,12 @@ function DeliveryManager.CompleteDelivery(self: ManagerInstance)
 	local completedTarget = self:GetCurrentTarget()
 	if not completedTarget then return end
 
-	if self.deliveryEvent then
-		self.deliveryEvent:FireServer(completedTarget.name)
+	-- Enviar reclamo de entrega al servidor para su validación
+	if self.claimEvent then
+		self.claimEvent:FireServer(completedTarget.name)
 	end
 
-	if self.onDeliveryCallback then
-		self.onDeliveryCallback(completedTarget.reward, completedTarget.displayName)
-	end
-
+	-- Rotar hacia el siguiente helipuerto objetivo tras breve pausa
 	task.delay(1.2, function()
 		if #self.targets > 1 then
 			local nextIndex = self.currentTargetIndex
@@ -169,6 +184,14 @@ end
 
 function DeliveryManager.SetOnDeliveryCallback(self: ManagerInstance, callback: (reward: number, padName: string) -> ())
 	self.onDeliveryCallback = callback
+end
+
+function DeliveryManager.Destroy(self: ManagerInstance)
+	if self.confirmedConn then
+		self.confirmedConn:Disconnect()
+		self.confirmedConn = nil
+	end
+	self.onDeliveryCallback = nil
 end
 
 return DeliveryManager

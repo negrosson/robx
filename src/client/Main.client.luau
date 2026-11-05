@@ -155,6 +155,7 @@ task.spawn(function()
 
 	-- Esperar ReplicatedStorage children con timeout explícito
 	local rsModules = {
+		"NetworkEvents",
 		"DroneController",
 		"DroneHUD",
 		"DroneAudio",

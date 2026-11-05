@@ -167,6 +167,31 @@ Inicialmente se intentaba anclar el `HumanoidRootPart` del avatar desde el clien
 | `src/shared/DroneCargo.luau` | ✅ Operativo | Contenedor acoplado en la parte inferior con rayo tractor. |
 | `src/shared/DeliveryManager.luau` | ✅ Operativo | Detección de aterrizaje en helipuertos, cálculo de recompensas y asignación de rutas. |
 | `src/shared/CyberGoggles.luau` | ✅ Operativo | Visor holográfico en la cabeza del avatar con lentes iluminados al conectar FPV. |
+| `src/shared/NetworkEvents.luau` | ✅ Operativo | Módulo centralizado de RemoteEvents tipados para cliente y servidor. |
+
+---
+
+## 8. Fase de Seguridad y Arquitectura Server-Side (v4.1)
+
+### 🛡️ 1. Validación Server-Side Anti-Exploits (`Main.server.luau`)
+Anteriormente, el evento `DeliveryCompleted` aceptaba peticiones directas del cliente sin validación física, permitiendo potencialmente cobros arbitrarios. Se implementó una triple barrera en el servidor:
+1. **Cooldown de Entrega:** Límite mínimo de 3 segundos entre entregas por jugador para evitar peticiones masivas en bucle.
+2. **Validación de Rango Físico:** Verificación de coordenadas reales entre `TestDrone` y el helipuerto (`distancia horizontal <= 18 studs`, `desplazamiento vertical entre -2 y +10 studs`).
+3. **Validación de Velocidad de Aterrizaje:** El servidor exige que la velocidad lineal del chasis (`AssemblyLinearVelocity.Magnitude`) sea inferior o igual a 20 studs/s en el momento del reclamo.
+4. **Respuesta Verificada:** Solo tras superar los 3 filtros, el servidor otorga `CyberCréditos`, incrementa las entregas y dispara el evento `DeliveryConfirmed` de vuelta al cliente.
+
+### 🌐 2. Centralización de Remotes (`NetworkEvents.luau`)
+Se eliminaron las búsquedas dispersas de `RemoteEvents` con strings mágicos en el DataModel. El nuevo módulo `src/shared/NetworkEvents.luau`:
+* Genera e inicializa los eventos de red en una carpeta dedicada (`CyberNetworkEvents`).
+* Ofrece resolución segura con `NetworkEvents.Get(...)` para cliente y servidor con tipado estricto.
+
+### 🧹 3. Ciclo de Vida y Limpieza de Recursos (`:Destroy()`)
+Se integró el método `:Destroy()` en `DroneController.luau` y `DeliveryManager.luau`:
+* Desconecta los bucles de actualización física (`RenderStepped`).
+* Destruye de forma segura los ScreenGuis de la interfaz holográfica (`DroneHUD`).
+* Libera sonidos de turbinas con fade out gradual (`DroneAudio`).
+* Elimina emisores y estelas (`DroneVFX`), contenedores (`DroneCargo`) y desvincula eventos de entrada del teclado.
 
 ---
 *Fin del documento de auditoría técnica.*
+

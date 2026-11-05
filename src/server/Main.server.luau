@@ -1,27 +1,19 @@
 --!strict
 -- src/server/Main.server.luau
--- Servidor Principal: Red de Helipuertos, Control Físico de Red y Economía
-local Players = game:GetService("Players")
+-- Servidor Principal v4.1: Red de Helipuertos, Control Físico, Red Centralizada y Seguridad Anti-Exploits
+local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
+local Workspace         = game:GetService("Workspace")
 
--- 1. RemoteEvents de Comunicación Cliente-Servidor
-local deliveryEvent = ReplicatedStorage:FindFirstChild("DeliveryCompleted") :: RemoteEvent?
-if not deliveryEvent then
-	deliveryEvent = Instance.new("RemoteEvent")
-	deliveryEvent.Name = "DeliveryCompleted"
-	deliveryEvent.Parent = ReplicatedStorage
-end
+local NetworkEvents = require(ReplicatedStorage:WaitForChild("NetworkEvents", 5) :: ModuleScript)
+NetworkEvents.Init()
 
-local flightStateEvent = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
-if not flightStateEvent then
-	flightStateEvent = Instance.new("RemoteEvent")
-	flightStateEvent.Name = "DroneFlightState"
-	flightStateEvent.Parent = ReplicatedStorage
-end
+local flightStateEvent       = NetworkEvents.Get(NetworkEvents.Names.DroneFlightState)
+local claimDeliveryEvent     = NetworkEvents.Get(NetworkEvents.Names.ClaimDelivery)
+local deliveryConfirmedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryConfirmed)
 
 ----------------------------------------------------------------------
--- 2. GENERADOR DE HELIPUERTOS Y RAMPA DE ACCESO
+-- 1. GENERADOR DE HELIPUERTOS Y RAMPA DE ACCESO
 ----------------------------------------------------------------------
 local function createHelipad(name: string, position: Vector3, primaryColor: Color3, hasRamp: boolean): Model
 	local model = Instance.new("Model")
@@ -104,7 +96,7 @@ end
 setupHelipads()
 
 ----------------------------------------------------------------------
--- 3. GESTIÓN DE TESTDRONE Y RESTRICCIONES DE FÍSICA
+-- 2. GESTIÓN DE TESTDRONE Y RESTRICCIONES DE FÍSICA
 ----------------------------------------------------------------------
 local dronePart = Workspace:FindFirstChild("TestDrone") :: BasePart?
 if not dronePart then
@@ -123,7 +115,7 @@ dronePart.CFrame = CFrame.new(0, 6.2, 0)
 dronePart.AssemblyLinearVelocity = Vector3.zero
 dronePart.AssemblyAngularVelocity = Vector3.zero
 
--- Restricciones físicas en el servidor para sincronización perfecta
+-- Restricciones físicas en el servidor
 local attachment = dronePart:FindFirstChild("FlightAttachment") :: Attachment?
 if not attachment then
 	attachment = Instance.new("Attachment")
@@ -156,13 +148,12 @@ if not alignOrientation then
 end
 
 ----------------------------------------------------------------------
--- 4. CONTROL DE ENLACE DE VUELO Y NETWORK OWNERSHIP DEL SERVIDOR
+-- 3. CONTROL DE ENLACE DE VUELO Y NETWORK OWNERSHIP
 ----------------------------------------------------------------------
 flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 	if not dronePart then return end
 
 	if state == "StartFlying" then
-		-- 1. Desanclar en el SERVIDOR (vital para que el cliente pueda moverlo físicamente)
 		dronePart.Anchored = false
 		local success, err = pcall(function()
 			dronePart:SetNetworkOwner(player)
@@ -173,20 +164,22 @@ flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 			warn(string.format("[Servidor] Error al transferir propiedad física a %s: %s", player.Name, tostring(err)))
 		end
 	elseif state == "StopFlying" then
-		-- 2. Al salir, frenar y anclar en el SERVIDOR para que no se caiga
 		dronePart.AssemblyLinearVelocity = Vector3.zero
 		dronePart.AssemblyAngularVelocity = Vector3.zero
 		dronePart.Anchored = true
 		pcall(function()
 			dronePart:SetNetworkOwnershipAuto()
 		end)
-		print(string.format("[Servidor] %s se ha desconectado del dron. TestDrone anclado en helipuerto.", player.Name))
+		print(string.format("[Servidor] %s se ha desconectado. TestDrone anclado.", player.Name))
 	end
 end)
 
 ----------------------------------------------------------------------
--- 5. ECONOMÍA Y LEADERSTATS
+-- 4. ECONOMÍA Y VALIDACIÓN SERVER-SIDE ANTI-EXPLOIT
 ----------------------------------------------------------------------
+local lastDeliveryTime: { [number]: number } = {}
+local MIN_DELIVERY_INTERVAL = 3.0  -- Cooldown mínimo entre entregas por jugador
+
 Players.PlayerAdded:Connect(function(player)
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
@@ -203,7 +196,61 @@ Players.PlayerAdded:Connect(function(player)
 	deliveries.Parent = leaderstats
 end)
 
-deliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
+Players.PlayerRemoving:Connect(function(player)
+	lastDeliveryTime[player.UserId] = nil
+end)
+
+-- Validación estricta en el servidor para otorgar recompensas
+claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
+	if typeof(padName) ~= "string" then return end
+	if not dronePart then return end
+
+	local now = os.clock()
+	local lastTime = lastDeliveryTime[player.UserId] or 0
+	if (now - lastTime) < MIN_DELIVERY_INTERVAL then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s intentó cobrar entrega demasiado rápido (cooldown violado).", player.Name))
+		return
+	end
+
+	-- 1. Verificar existencia del helipuerto
+	local padsFolder = Workspace:FindFirstChild("LandingPads") :: Folder?
+	if not padsFolder then return end
+
+	local padModel = padsFolder:FindFirstChild(padName) :: Model?
+	if not padModel then
+		warn(string.format("[Servidor ANTI-EXPLOIT] Helipuerto '%s' inexistente reclamado por %s.", padName, player.Name))
+		return
+	end
+
+	local basePad = padModel:FindFirstChild("BasePad") :: BasePart?
+	if not basePad then return end
+
+	-- 2. Validar distancia física real entre TestDrone y el helipuerto
+	local dronePos = dronePart.Position
+	local padPos   = basePad.Position
+	local horizDistance = Vector3.new(dronePos.X - padPos.X, 0, dronePos.Z - padPos.Z).Magnitude
+	local vertDiff = dronePos.Y - padPos.Y
+
+	if horizDistance > 18 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero el dron está a %.1f studs del helipuerto (máx 18).", player.Name, horizDistance))
+		return
+	end
+
+	if vertDiff < -2 or vertDiff > 10 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero la altura del dron es inválida (diff: %.1f studs).", player.Name, vertDiff))
+		return
+	end
+
+	-- 3. Validar velocidad segura de aterrizaje
+	local droneSpeed = dronePart.AssemblyLinearVelocity.Magnitude
+	if droneSpeed > 20 then
+		warn(string.format("[Servidor ANTI-EXPLOIT] %s aterrizó a exceso de velocidad (%.1f studs/s, máx 20).", player.Name, droneSpeed))
+		return
+	end
+
+	-- 4. Otorgar recompensas legítimas
+	lastDeliveryTime[player.UserId] = now
+
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then return end
 
@@ -214,6 +261,9 @@ deliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 		local reward = 250
 		credits.Value += reward
 		deliveries.Value += 1
-		print(string.format("[Servidor] Entrega en %s confirmada para %s (+%d ₵)", tostring(padName), player.Name, reward))
+		print(string.format("[Servidor SEGURO] Entrega validada en %s para %s (+%d ₵)", padName, player.Name, reward))
+
+		-- Confirmar al cliente para activar animaciones/HUD legítimas
+		deliveryConfirmedEvent:FireClient(player, padName, reward)
 	end
 end)

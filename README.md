@@ -57,3 +57,4 @@ Para sincronizar el proyecto con Roblox Studio:
 rojo serve
 ```
 Y conectar el plugin de Rojo en Roblox Studio.
+
