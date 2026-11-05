@@ -563,6 +563,7 @@ end
 
 function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName: string)
 	self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d CYBER-CRÉDITOS", targetName:upper(), reward)
+	self.successText.TextColor3 = COLOR_NEON_YELLOW
 	self.successPopup.Visible = true
 	self.successPopup.Size = UDim2.fromOffset(360, 60)
 
@@ -579,6 +580,35 @@ function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName
 				self.successPopup,
 				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 				{ Size = UDim2.fromOffset(300, 20), BackgroundTransparency = 1 }
+			)
+			fade:Play()
+			fade.Completed:Connect(function()
+				self.successPopup.Visible = false
+				self.successPopup.BackgroundTransparency = 0.2
+			end)
+		end
+	end)
+end
+
+function DroneHUD.ShowHint(self: HUDInstance, message: string, isError: boolean?)
+	self.successText.Text = message
+	self.successText.TextColor3 = if isError then COLOR_WARN else COLOR_NEON_YELLOW
+	self.successPopup.Visible = true
+	self.successPopup.Size = UDim2.fromOffset(420, 60)
+
+	local tween = TweenService:Create(
+		self.successPopup,
+		TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Size = UDim2.fromOffset(440, 66) }
+	)
+	tween:Play()
+
+	task.delay(2.5, function()
+		if self.successPopup then
+			local fade = TweenService:Create(
+				self.successPopup,
+				TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Size = UDim2.fromOffset(360, 20), BackgroundTransparency = 1 }
 			)
 			fade:Play()
 			fade.Completed:Connect(function()

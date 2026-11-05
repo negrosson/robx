@@ -615,9 +615,23 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.V          then self.isFPV = not self.isFPV
 		elseif k == Enum.KeyCode.G          then
 			if self.deliveryManager and (self.deliveryManager :: any).TryManualDeliver then
-				pcall(function()
-					(self.deliveryManager :: any):TryManualDeliver(self.rootPart.Position, self.currentVelocity)
+				local ok, success, hint = pcall(function()
+					return (self.deliveryManager :: any):TryManualDeliver(self.rootPart.Position, self.currentVelocity)
 				end)
+				if ok then
+					if success then
+						if self.hud and (self.hud :: any).ShowHint then
+							pcall(function() (self.hud :: any):ShowHint("[G] ¡SOLICITUD DE ENTREGA ENVIADA!", false) end)
+						end
+					else
+						local msg = if typeof(hint) == "string" then hint else "Debes estar sobre un helipuerto"
+						if self.hud and (self.hud :: any).ShowHint then
+							pcall(function() (self.hud :: any):ShowHint("[G] FUERA DE ZONA: " .. msg, true) end)
+						end
+					end
+				end
+			else
+				warn("[DroneController] DeliveryManager no disponible al presionar G")
 			end
 		end
 	end)

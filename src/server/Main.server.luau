@@ -11,6 +11,7 @@ NetworkEvents.Init()
 local flightStateEvent       = NetworkEvents.Get(NetworkEvents.Names.DroneFlightState)
 local claimDeliveryEvent     = NetworkEvents.Get(NetworkEvents.Names.ClaimDelivery)
 local deliveryConfirmedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryConfirmed)
+local deliveryRejectedEvent  = NetworkEvents.Get(NetworkEvents.Names.DeliveryRejected)
 
 ----------------------------------------------------------------------
 -- 1. GENERADOR DE HELIPUERTOS Y RAMPA DE ACCESO
@@ -253,6 +254,7 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local lastTime = lastDeliveryTime[player.UserId] or 0
 	if (now - lastTime) < MIN_DELIVERY_INTERVAL then
 		warn(string.format("[Servidor ANTI-EXPLOIT] %s intentó cobrar entrega demasiado rápido (cooldown violado).", player.Name))
+		deliveryRejectedEvent:FireClient(player, "Espera 3 segundos entre entregas")
 		return
 	end
 
@@ -263,6 +265,7 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local padModel = padsFolder:FindFirstChild(padName) :: Model?
 	if not padModel then
 		warn(string.format("[Servidor ANTI-EXPLOIT] Helipuerto '%s' inexistente reclamado por %s.", padName, player.Name))
+		deliveryRejectedEvent:FireClient(player, "Helipuerto no registrado en la red")
 		return
 	end
 
@@ -277,11 +280,13 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 
 	if horizDistance > 25 then
 		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero el dron está a %.1f studs del helipuerto (máx 25).", player.Name, horizDistance))
+		deliveryRejectedEvent:FireClient(player, string.format("Estás muy lejos del helipuerto (%.0f studs)", horizDistance))
 		return
 	end
 
 	if vertDiff < -3 or vertDiff > 16 then
 		warn(string.format("[Servidor ANTI-EXPLOIT] %s reclamó entrega pero la altura del dron es inválida (diff: %.1f studs, rango: -3 a +16).", player.Name, vertDiff))
+		deliveryRejectedEvent:FireClient(player, "Altitud incorrecta respecto a la plataforma")
 		return
 	end
 
@@ -289,6 +294,7 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local droneSpeed = dronePart.AssemblyLinearVelocity.Magnitude
 	if droneSpeed > 30 then
 		warn(string.format("[Servidor ANTI-EXPLOIT] %s aterrizó a exceso de velocidad (%.1f studs/s, máx 30).", player.Name, droneSpeed))
+		deliveryRejectedEvent:FireClient(player, string.format("Velocidad muy alta (%.0f studs/s, máx 30)", droneSpeed))
 		return
 	end
 

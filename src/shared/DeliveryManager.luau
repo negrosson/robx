@@ -148,6 +148,18 @@ function DeliveryManager.new(): ManagerInstance
 		self:PickNextTarget(padName)
 	end)
 
+	-- Escuchar rechazo de entrega para resetear estado
+	pcall(function()
+		local rejectedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryRejected)
+		if rejectedEvent then
+			rejectedEvent.OnClientEvent:Connect(function(reason: string)
+				warn("[DeliveryManager] Servidor rechazó entrega:", reason)
+				self.isLanded = false
+				self.touchdownTimer = 0
+			end)
+		end
+	end)
+
 	print(string.format("[DeliveryManager] Inicializado con %d helipuertos. Objetivo inicial: %s",
 		#targets, targets[self.currentTargetIndex].displayName))
 
@@ -218,36 +230,37 @@ function DeliveryManager.CheckPadZone(
 	self: ManagerInstance,
 	dronePosition: Vector3,
 	droneVelocity: Vector3
-): (boolean, DeliveryTarget?, number)
+): (boolean, DeliveryTarget?, number, string?)
 	local speed = droneVelocity.Magnitude
 	if speed > MAX_SAFE_SPEED then
-		return false, nil, 0
+		return false, nil, 0, string.format("Velocidad alta (%.0f studs/s, máx 25). Frena con [X].", speed)
 	end
 
-	-- 1. Comprobar primero el objetivo primario (bono completo)
-	local primary = self:GetCurrentTarget()
-	if primary then
-		local horizDist = Vector3.new(dronePosition.X - primary.basePadPosition.X, 0, dronePosition.Z - primary.basePadPosition.Z).Magnitude
-		local vertDiff = dronePosition.Y - primary.basePadPosition.Y
+	local closestTarget: DeliveryTarget? = nil
+	local closestDist = math.huge
+
+	-- 1. Comprobar si está dentro de la zona de CUALQUIER helipuerto disponible
+	for _, tgt in ipairs(self.targets) do
+		local horizDist = Vector3.new(dronePosition.X - tgt.basePadPosition.X, 0, dronePosition.Z - tgt.basePadPosition.Z).Magnitude
+		local vertDiff = dronePosition.Y - tgt.basePadPosition.Y
+
+		if horizDist < closestDist then
+			closestDist = horizDist
+			closestTarget = tgt
+		end
 
 		if horizDist <= MAX_HORIZ_DIST and vertDiff >= MIN_VERT_DIFF and vertDiff <= MAX_VERT_DIFF then
-			return true, primary, primary.reward
+			-- Helipuerto válido alcanzado!
+			return true, tgt, tgt.reward, nil
 		end
 	end
 
-	-- 2. Comprobar otros helipuertos secundarios si no es el helipuerto de despegue
-	for _, tgt in ipairs(self.targets) do
-		if tgt.name ~= self.originPadName and tgt.name ~= primary.name then
-			local horizDist = Vector3.new(dronePosition.X - tgt.basePadPosition.X, 0, dronePosition.Z - tgt.basePadPosition.Z).Magnitude
-			local vertDiff = dronePosition.Y - tgt.basePadPosition.Y
+	-- Fuera de zona: dar indicación clara al jugador
+	local hint = if closestTarget
+		then string.format("Helipuerto más cercano: %s a %.0f studs", closestTarget.displayName, closestDist)
+		else "No hay helipuertos detectados en rango"
 
-			if horizDist <= MAX_HORIZ_DIST and vertDiff >= MIN_VERT_DIFF and vertDiff <= MAX_VERT_DIFF then
-				return true, tgt, 175  -- recompensa secundaria por entrega alternativa
-			end
-		end
-	end
-
-	return false, nil, 0
+	return false, closestTarget, 0, hint
 end
 
 -- Actualización por frame en el loop de vuelo
@@ -257,7 +270,7 @@ function DeliveryManager.Update(
 	dronePosition: Vector3,
 	droneVelocity: Vector3
 ): (boolean, number)
-	local inZone, target, _ = self:CheckPadZone(dronePosition, droneVelocity)
+	local inZone, target, _, _ = self:CheckPadZone(dronePosition, droneVelocity)
 
 	if inZone and target then
 		self.currentZonePadName = target.name
@@ -279,15 +292,17 @@ function DeliveryManager.Update(
 end
 
 -- Entrega manual inmediata al presionar tecla [G] sobre la zona
-function DeliveryManager.TryManualDeliver(self: ManagerInstance, dronePosition: Vector3, droneVelocity: Vector3): boolean
-	local inZone, target, _ = self:CheckPadZone(dronePosition, droneVelocity)
-	if inZone and target and not self.isLanded then
-		self.isLanded = true
-		print(string.format("[DeliveryManager] ¡Entrega manual [G] activada en %s!", target.displayName))
+function DeliveryManager.TryManualDeliver(self: ManagerInstance, dronePosition: Vector3, droneVelocity: Vector3): (boolean, string?)
+	local inZone, target, _, hint = self:CheckPadZone(dronePosition, droneVelocity)
+	if inZone and target then
+		print(string.format("[DeliveryManager] ¡Entrega manual [G] ejecutada en %s!", target.displayName))
 		self:CompleteDelivery(target.name)
-		return true
+		return true, string.format("¡Entregando en %s!", target.displayName)
+	else
+		local reason = hint or "Debes estar sobre un helipuerto para entregar"
+		print("[DeliveryManager] [G] Rechazado:", reason)
+		return false, reason
 	end
-	return false
 end
 
 -- Envía la solicitud de reclamo al servidor
