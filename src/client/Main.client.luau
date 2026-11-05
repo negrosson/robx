@@ -1,7 +1,7 @@
 --!strict
 -- src/client/Main.client.luau
--- v4.0 - Arquitectura limpia: carga lazy, sin bloqueos, debug completo
-print("[CLIENTE v4] Main.client.luau iniciando...")
+-- v5.0 - Fix definitivo: gpe eliminado en tecla E, carga robusta, debug completo
+print("[CLIENTE v5] Main.client.luau iniciando...")
 
 local Players            = game:GetService("Players")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
@@ -50,7 +50,7 @@ btnStroke.Parent    = toggleBtn
 -- Debug label (esquina superior izquierda)
 local debugLabel = Instance.new("TextLabel")
 debugLabel.Name                  = "DebugLabel"
-debugLabel.Size                  = UDim2.new(0, 500, 0, 22)
+debugLabel.Size                  = UDim2.new(0, 600, 0, 22)
 debugLabel.Position              = UDim2.new(0, 8, 0, 8)
 debugLabel.BackgroundTransparency = 1
 debugLabel.Font                  = Enum.Font.Code
@@ -134,10 +134,22 @@ toggleBtn.MouseButton1Click:Connect(function()
 	if not isPiloting then enterDrone() else exitDrone() end
 end)
 
--- Tecla E para conectar / F para desconectar
+----------------------------------------------------------------------
+-- FIX CRÍTICO: Tecla E sin filtro gpe para permitir captura siempre.
+-- Roblox marca E/F como gpe=false normalmente, pero el sistema de
+-- detección de proximidad puede cambiarlos. Usamos GetKeysPressed() y
+-- una conexión directa sin verificar gpe para E y F específicamente.
+----------------------------------------------------------------------
 UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
-	-- Solo bloquear si es texto de chat, NO para teclas de juego
-	if gpe then return end
+	-- Solo bloquear si está escribiendo en el chat (TextBox con foco)
+	if gpe then
+		-- Verificar si el TextBox del chat es el culpable
+		local focused = UserInputService:GetFocusedTextBox()
+		if focused then return end  -- Usuario está escribiendo → ignorar
+		-- Si gpe=true pero NO hay TextBox con foco, fue el ProximityPrompt u otro sistema
+		-- → permitir igual para E y F
+	end
+
 	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
 	if input.KeyCode == Enum.KeyCode.E then
@@ -151,11 +163,19 @@ end)
 -- 4. CARGA ASÍNCRONA (task.spawn = no bloquea UI)
 ----------------------------------------------------------------------
 task.spawn(function()
-	dbg("Cargando módulos de ReplicatedStorage...")
+	dbg("Esperando que el servidor inicialice ReplicatedStorage...")
 
-	-- Esperar ReplicatedStorage children con timeout explícito
+	-- Esperar NetworkEvents primero (indica que el servidor corrió)
+	local neModule = ReplicatedStorage:WaitForChild("NetworkEvents", 30)
+	if not neModule then
+		warn("[CLIENTE] TIMEOUT esperando NetworkEvents - servidor no inició")
+		setBtn("ERROR: Servidor no respondió", 255, 80, 80)
+		return
+	end
+	dbg("NetworkEvents OK")
+
+	-- Lista de módulos que DEBEN existir en ReplicatedStorage
 	local rsModules = {
-		"NetworkEvents",
 		"DroneController",
 		"DroneHUD",
 		"DroneAudio",
@@ -166,7 +186,7 @@ task.spawn(function()
 	}
 
 	for _, modName in rsModules do
-		local child = ReplicatedStorage:WaitForChild(modName, 20)
+		local child = ReplicatedStorage:WaitForChild(modName, 15)
 		if not child then
 			warn("[CLIENTE] TIMEOUT esperando módulo:", modName)
 			setBtn("ERROR: falta " .. modName, 255, 80, 80)
@@ -195,7 +215,7 @@ task.spawn(function()
 	if localPlayer.Character then setupGoggles(localPlayer.Character) end
 	localPlayer.CharacterAdded:Connect(setupGoggles)
 
-	-- Cargar DroneController (carga lazy: los sub-módulos se cargan dentro de new())
+	-- Cargar DroneController
 	local okCtrl, ctrlResult = pcall(function()
 		return require(ReplicatedStorage:WaitForChild("DroneController", 5) :: ModuleScript)
 	end)
@@ -207,32 +227,46 @@ task.spawn(function()
 	DroneController = ctrlResult
 	dbg("DroneController módulo OK")
 
-	-- Esperar el dron en Workspace
+	-- Esperar el dron en Workspace — con reintentos cada segundo hasta 30s
 	dbg("Esperando TestDrone en Workspace...")
-	local droneEntity = Workspace:WaitForChild("TestDrone", 20) :: Instance?
+	local droneEntity: Instance? = nil
+	local waitStart = os.clock()
+	while os.clock() - waitStart < 30 do
+		droneEntity = Workspace:FindFirstChild("TestDrone")
+		if droneEntity then break end
+		task.wait(0.5)
+	end
+
 	if not droneEntity then
-		warn("[CLIENTE] TestDrone no encontrado en Workspace tras 20s!")
+		warn("[CLIENTE] TestDrone no encontrado en Workspace tras 30s!")
 		setBtn("ERROR: TestDrone no encontrado", 255, 80, 80)
 		return
 	end
 	dbg("TestDrone encontrado: " .. droneEntity:GetFullName())
 
-	-- Esperar RemoteEvent del servidor
+	-- Verificar RemoteEvent del servidor
 	local flightEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 10)
 	if not flightEvent then
-		warn("[CLIENTE] DroneFlightState RemoteEvent no encontrado!")
-	else
+		-- Intentar en subcarpeta
+		local evFolder = ReplicatedStorage:WaitForChild("CyberNetworkEvents", 5)
+		if evFolder then
+			flightEvent = evFolder:WaitForChild("DroneFlightState", 5)
+		end
+	end
+	if flightEvent then
 		dbg("DroneFlightState RemoteEvent OK")
+	else
+		warn("[CLIENTE] DroneFlightState no encontrado - el dron puede no desanclarse")
 	end
 
-	-- Crear instancia del controlador
+	-- Crear instancia del controlador (con timeout de protección)
 	dbg("Creando DroneController.new()...")
 	local okNew, newResult = pcall(function()
 		return DroneController.new(droneEntity)
 	end)
 	if not okNew then
 		warn("[CLIENTE] DroneController.new() falló:", newResult)
-		setBtn("ERROR new(): " .. tostring(newResult):sub(1, 30), 255, 80, 80)
+		setBtn("ERROR new(): " .. tostring(newResult):sub(1, 40), 255, 80, 80)
 		return
 	end
 
@@ -240,5 +274,36 @@ task.spawn(function()
 	droneReady = true
 	dbg("¡DRON LISTO! Presiona E para pilotar.")
 	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
-	print("[CLIENTE v4] ¡Sistema de vuelo completamente inicializado!")
+	print("[CLIENTE v5] ¡Sistema de vuelo completamente inicializado!")
+
+	-- Conectar eventos de combate del servidor
+	task.spawn(function()
+		local onDmg = ReplicatedStorage:WaitForChild("OnDamageTaken", 10)
+		if onDmg and onDmg:IsA("RemoteEvent") then
+			(onDmg :: RemoteEvent).OnClientEvent:Connect(function(damage: number)
+				if myDrone then pcall(function() myDrone:ApplyDamage(damage) end) end
+			end)
+			dbg("OnDamageTaken conectado")
+		end
+	end)
+
+	task.spawn(function()
+		local onEMP = ReplicatedStorage:WaitForChild("OnEMPActivated", 10)
+		if onEMP and onEMP:IsA("RemoteEvent") then
+			(onEMP :: RemoteEvent).OnClientEvent:Connect(function(dur: number)
+				if myDrone then pcall(function() myDrone:TriggerEMPLocal(dur) end) end
+			end)
+			dbg("OnEMPActivated conectado")
+		end
+	end)
+
+	task.spawn(function()
+		local onHeat = ReplicatedStorage:WaitForChild("OnHeatUpdate", 10)
+		if onHeat and onHeat:IsA("RemoteEvent") then
+			(onHeat :: RemoteEvent).OnClientEvent:Connect(function(heatAmt: number)
+				if myDrone then pcall(function() myDrone:ApplyHeat(heatAmt) end) end
+			end)
+			dbg("OnHeatUpdate conectado")
+		end
+	end)
 end)

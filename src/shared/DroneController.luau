@@ -100,8 +100,12 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		linearVelocity.RelativeTo     = Enum.ActuatorRelativeTo.World
 		linearVelocity.MaxForce       = 1e6
 		linearVelocity.VectorVelocity = Vector3.zero
+		linearVelocity.Enabled        = true   -- asegurar habilitado
 		linearVelocity.Parent         = rootPart
 		print("[DroneController] FlightVelocity creado por cliente")
+	else
+		-- Si ya existía, asegurarse de que esté habilitado
+		linearVelocity.Enabled = true
 	end
 
 	local alignOrientation = rootPart:FindFirstChild("FlightOrientation") :: AlignOrientation?
@@ -113,8 +117,11 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		alignOrientation.Responsiveness = 25
 		alignOrientation.MaxTorque   = 1e6
 		alignOrientation.CFrame      = rootPart.CFrame
+		alignOrientation.Enabled     = true   -- asegurar habilitado
 		alignOrientation.Parent      = rootPart
 		print("[DroneController] FlightOrientation creado por cliente")
+	else
+		alignOrientation.Enabled = true
 	end
 
 	-- 3. RemoteEvent del servidor
@@ -222,6 +229,19 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		currentRoll      = 0,
 		turboEnergy      = 100,
 
+		-- ═══ NUEVO: estado de combate y daño ═══
+		currentHealth    = 100,       -- HP del dron del jugador
+		maxHealth        = 100,
+		currentHeat      = 0,         -- calor acumulado (0–maxHeat)
+		maxHeat          = 100,
+		isEMPed          = false,     -- estado de caída libre por sobrecalentamiento
+		empEndTime       = 0,         -- os.clock() cuando termina el EMP
+		armorReduction   = 0.0,       -- mitigación de daño (del DroneCatalog.spec)
+		empResistance    = 0.0,       -- resistencia a microondas (del DroneCatalog.spec)
+		heatCoolingRate  = 8,         -- puntos de calor/s que se disipan
+		droneMassKg      = 5,         -- kg del chasis (para Ek de impacto)
+		cargoSpeedMult   = 1.0,       -- multiplicador de velocidad por carga (DroneCargo)
+
 		-- estado
 		isFPV      = false,
 		isFlying   = false,
@@ -317,6 +337,13 @@ function DroneController:StartFlying()
 	self.connection = RunService.RenderStepped:Connect(function(dt: number)
 		dt = math.clamp(dt, 0, 0.1)
 
+		-- ═══ GUARD EMP: si el dron está apagado por EMP, caída libre ═══
+		if self.isEMPed then
+			self.currentVelocity = Vector3.zero
+			-- LinearVelocity ya desactivado por TriggerEMPLocal, no forzar aquí
+			return
+		end
+
 		-- Actualizar lista de exclusión para raycast
 		local filterList: { Instance } = { self.rootPart }
 		local lp = Players.LocalPlayer
@@ -333,7 +360,7 @@ function DroneController:StartFlying()
 			self.turboEnergy = math.min(100, self.turboEnergy + dt * 12)
 		end
 
-		local maxSpeed = if isBoosting then self.config.turboSpeed else self.config.cruiseSpeed
+		local maxSpeed = (if isBoosting then self.config.turboSpeed else self.config.cruiseSpeed) * (self.cargoSpeedMult or 1.0)
 
 		-- Vectores de cámara aplanados al plano horizontal
 		local cam = Workspace.CurrentCamera
@@ -618,6 +645,122 @@ function DroneController:UnbindInputs()
 	self.inputState.down     = false
 	self.inputState.turbo    = false
 	self.inputState.brake    = false
+end
+
+----------------------------------------------------------------------
+-- ═══════════════════════════════════════════════════════════════════
+-- EXTENSIONES DE COMBATE — ApplyDamage, ApplyHeat, SetCargoMass
+-- ═══════════════════════════════════════════════════════════════════
+----------------------------------------------------------------------
+
+-- Aplica daño al dron del jugador (recibido del servidor via RemoteEvent)
+function DroneController:ApplyDamage(finalDamage: number)
+	self.currentHealth = math.max(0, (self.currentHealth or self.maxHealth) - finalDamage)
+	local hpPct = self.currentHealth / (self.maxHealth or 100)
+
+	if self.hud then
+		pcall(function()
+			if (self.hud :: any).SetHealthDisplay then
+				(self.hud :: any):SetHealthDisplay(hpPct)
+			end
+		end)
+	end
+	if self.vfx then
+		pcall(function()
+			if (self.vfx :: any).PlayHitEffect then
+				(self.vfx :: any):PlayHitEffect(finalDamage)
+			end
+		end)
+	end
+
+	if self.currentHealth <= 0 then
+		warn("[DroneController] ¡Dron destruido! Desconectando enlace FPV...")
+		self:StopFlying()
+	end
+end
+
+-- Aplica calor y gestiona estado EMP en el cliente (eco del servidor)
+function DroneController:ApplyHeat(heatAmount: number)
+	local maxH = self.maxHeat or 100
+	self.currentHeat = math.min(maxH, (self.currentHeat or 0) + heatAmount)
+	local heatPct = self.currentHeat / maxH
+
+	if self.hud then
+		pcall(function()
+			if (self.hud :: any).SetHeatDisplay then
+				(self.hud :: any):SetHeatDisplay(heatPct)
+			end
+		end)
+	end
+
+	if heatPct >= 1.0 and not self.isEMPed then
+		self:TriggerEMPLocal(2.0)
+	end
+end
+
+-- Activa EMP local: congela física cliente y espera restauración
+function DroneController:TriggerEMPLocal(duration: number)
+	if self.isEMPed then return end
+	self.isEMPed = true
+	self.empEndTime = os.clock() + duration
+	self.currentVelocity = Vector3.zero
+	if self.linearVelocity then
+		self.linearVelocity.VectorVelocity = Vector3.zero
+		self.linearVelocity.Enabled = false   -- caída libre real
+	end
+	if self.alignOrientation then
+		self.alignOrientation.Enabled = false  -- pierde orientación
+	end
+	if self.vfx then
+		pcall(function()
+			if (self.vfx :: any).PlayEMPEffect then (self.vfx :: any):PlayEMPEffect() end
+		end)
+	end
+	print(string.format("[DroneController] EMP activo %.1fs", duration))
+	task.delay(duration, function()
+		self.isEMPed = false
+		self.currentHeat = (self.maxHeat or 100) * 0.8
+		-- Restaurar constraints
+		if self.linearVelocity then self.linearVelocity.Enabled = true end
+		if self.alignOrientation then self.alignOrientation.Enabled = true end
+		print("[DroneController] Sistemas restaurados.")
+	end)
+end
+
+-- Configura la masa de la carga y actualiza el multiplicador de velocidad
+-- VelocidadEfectiva = Base / (1 + masaCarga * α)
+function DroneController:SetCargoMass(massKg: number, inertiaAlpha: number?, unstable: boolean?)
+	local alpha = inertiaAlpha or 0.040
+	self.cargoSpeedMult = math.max(0.3, 1.0 / (1 + massKg * alpha))
+	if self.cargo then
+		pcall(function()
+			if (self.cargo :: any).SetCargo then
+				(self.cargo :: any):SetCargo(massKg, alpha, unstable or false)
+			end
+		end)
+	end
+	print(string.format("[DroneController] Carga %.1f kg | Mult. velocidad %.2fx", massKg, self.cargoSpeedMult))
+end
+
+-- Aplica estadísticas de un DroneSpec al controlador (para cambio de dron)
+function DroneController:ApplySpec(spec: { [string]: any })
+	self.maxHealth       = (spec.maxHealth :: number?) or 100
+	self.currentHealth   = self.maxHealth
+	self.maxHeat         = (spec.maxHeat :: number?) or 100
+	self.currentHeat     = 0
+	self.heatCoolingRate = (spec.heatCoolingRate :: number?) or 8
+	self.armorReduction  = (spec.armorReduction :: number?) or 0
+	self.empResistance   = (spec.empResistance :: number?) or 0
+	self.droneMassKg     = (spec.mass :: number?) or 5
+	self.config.cruiseSpeed   = (spec.maxSpeed :: number?) or self.config.cruiseSpeed
+	self.config.turboSpeed    = (spec.turboSpeed :: number?) or self.config.turboSpeed
+	self.config.verticalSpeed = (spec.verticalSpeed :: number?) or self.config.verticalSpeed
+	self.config.accelRate     = (spec.accelRate :: number?) or self.config.accelRate
+	self.config.decelRate     = (spec.decelRate :: number?) or self.config.decelRate
+	self.config.brakeRate     = (spec.brakeRate :: number?) or self.config.brakeRate
+	self.config.tiltAngle     = (spec.tiltAngle :: number?) or self.config.tiltAngle
+	print(string.format("[DroneController] Spec aplicada: %s | HP:%d | Calor:%d | Vel:%.0f",
+		tostring(spec.name), self.maxHealth, self.maxHeat, self.config.cruiseSpeed))
 end
 
 ----------------------------------------------------------------------

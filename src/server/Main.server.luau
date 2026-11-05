@@ -132,6 +132,7 @@ if not linearVelocity then
 	linearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
 	linearVelocity.MaxForce = 1e6
 	linearVelocity.VectorVelocity = Vector3.zero
+	linearVelocity.Enabled = true
 	linearVelocity.Parent = dronePart
 end
 
@@ -144,6 +145,7 @@ if not alignOrientation then
 	alignOrientation.Responsiveness = 25
 	alignOrientation.MaxTorque = 1e6
 	alignOrientation.CFrame = dronePart.CFrame
+	alignOrientation.Enabled = true
 	alignOrientation.Parent = dronePart
 end
 
