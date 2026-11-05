@@ -1,0 +1,12 @@
+# Roblox Studio temporary & build files
+*.rbxlx
+*.rbxl
+*.rbxmx
+*.rbxm
+
+# OS / Tool files
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+.rojo/

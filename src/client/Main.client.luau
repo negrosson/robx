@@ -1,0 +1,243 @@
+--!strict
+-- src/client/Main.client.luau
+-- v4.0 - Arquitectura limpia: carga lazy, sin bloqueos, debug completo
+print("[CLIENTE v4] Main.client.luau iniciando...")
+
+local Players            = game:GetService("Players")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local RunService         = game:GetService("RunService")
+local UserInputService   = game:GetService("UserInputService")
+local Workspace          = game:GetService("Workspace")
+
+local localPlayer = Players.LocalPlayer
+local playerGui   = localPlayer:WaitForChild("PlayerGui") :: PlayerGui
+
+----------------------------------------------------------------------
+-- 1. BOTÓN HOLOGRÁFICO (creado INMEDIATAMENTE, antes de cualquier carga)
+----------------------------------------------------------------------
+local toggleGui = Instance.new("ScreenGui")
+toggleGui.Name           = "DroneQuickToggleGui"
+toggleGui.ResetOnSpawn   = false
+toggleGui.IgnoreGuiInset = true
+toggleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+toggleGui.Parent         = playerGui
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name                  = "ToggleFPVButton"
+toggleBtn.Size                  = UDim2.fromOffset(380, 50)
+toggleBtn.AnchorPoint           = Vector2.new(0.5, 1)
+toggleBtn.Position              = UDim2.new(0.5, 0, 1, -28)
+toggleBtn.BackgroundColor3      = Color3.fromRGB(12, 18, 28)
+toggleBtn.BackgroundTransparency = 0.15
+toggleBtn.BorderSizePixel       = 0
+toggleBtn.Font                  = Enum.Font.Code
+toggleBtn.Text                  = "[INICIANDO SISTEMA...]"
+toggleBtn.TextColor3            = Color3.fromRGB(180, 180, 180)
+toggleBtn.TextSize              = 14
+toggleBtn.AutoButtonColor       = false
+toggleBtn.Parent                = toggleGui
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 8)
+btnCorner.Parent       = toggleBtn
+
+local btnStroke = Instance.new("UIStroke")
+btnStroke.Name      = "BtnStroke"
+btnStroke.Color     = Color3.fromRGB(80, 80, 80)
+btnStroke.Thickness = 2
+btnStroke.Parent    = toggleBtn
+
+-- Debug label (esquina superior izquierda)
+local debugLabel = Instance.new("TextLabel")
+debugLabel.Name                  = "DebugLabel"
+debugLabel.Size                  = UDim2.new(0, 500, 0, 22)
+debugLabel.Position              = UDim2.new(0, 8, 0, 8)
+debugLabel.BackgroundTransparency = 1
+debugLabel.Font                  = Enum.Font.Code
+debugLabel.Text                  = "[DBG] Iniciando..."
+debugLabel.TextColor3            = Color3.fromRGB(0, 255, 180)
+debugLabel.TextSize              = 12
+debugLabel.TextXAlignment        = Enum.TextXAlignment.Left
+debugLabel.Parent                = toggleGui
+
+local function dbg(msg: string)
+	debugLabel.Text = "[DBG] " .. msg
+	print("[CLIENTE DBG]", msg)
+end
+
+local function setBtn(text: string, r: number, g: number, b: number)
+	toggleBtn.Text       = text
+	toggleBtn.TextColor3 = Color3.fromRGB(r, g, b)
+	btnStroke.Color      = Color3.fromRGB(r, g, b)
+end
+
+----------------------------------------------------------------------
+-- 2. ESTADO GLOBAL
+----------------------------------------------------------------------
+local isPiloting        = false
+local myDrone: any      = nil   -- DroneController instance
+local droneReady        = false
+local DroneController: any = nil
+local CyberGoggles: any    = nil
+
+----------------------------------------------------------------------
+-- 3. FUNCIONES DE VUELO
+----------------------------------------------------------------------
+local function enterDrone()
+	if isPiloting then return end
+
+	if not droneReady or myDrone == nil then
+		dbg("Dron NO listo aún, espera...")
+		setBtn("[E] CARGANDO DRON... ESPERA", 255, 200, 0)
+		return
+	end
+
+	dbg("Iniciando vuelo FPV...")
+	isPiloting = true
+	setBtn("[F] DESCONECTAR VISOR FPV", 255, 220, 0)
+
+	-- Activar gafas en avatar
+	local char = localPlayer.Character
+	if char and CyberGoggles then
+		pcall(function() CyberGoggles.SetOnline(char, true) end)
+	end
+
+	-- Iniciar vuelo
+	local ok, err = pcall(function() myDrone:StartFlying() end)
+	if not ok then
+		warn("[CLIENTE] Error en StartFlying:", err)
+		isPiloting = false
+		setBtn("[E] ERROR AL VOLAR - REINTENTA", 255, 80, 80)
+	else
+		dbg("Vuelo FPV activo! WASD=mover Space=subir Shift/Ctrl/C=bajar Q=turbo X=freno V=FPV")
+	end
+end
+
+local function exitDrone()
+	if not isPiloting then return end
+	isPiloting = false
+
+	dbg("Desconectando visor FPV...")
+	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+
+	local char = localPlayer.Character
+	if char and CyberGoggles then
+		pcall(function() CyberGoggles.SetOnline(char, false) end)
+	end
+	if myDrone then
+		pcall(function() myDrone:StopFlying() end)
+	end
+end
+
+-- Click en botón
+toggleBtn.MouseButton1Click:Connect(function()
+	if not isPiloting then enterDrone() else exitDrone() end
+end)
+
+-- Tecla E para conectar / F para desconectar
+UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
+	-- Solo bloquear si es texto de chat, NO para teclas de juego
+	if gpe then return end
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+	if input.KeyCode == Enum.KeyCode.E then
+		if not isPiloting then enterDrone() else exitDrone() end
+	elseif input.KeyCode == Enum.KeyCode.F then
+		if isPiloting then exitDrone() end
+	end
+end)
+
+----------------------------------------------------------------------
+-- 4. CARGA ASÍNCRONA (task.spawn = no bloquea UI)
+----------------------------------------------------------------------
+task.spawn(function()
+	dbg("Cargando módulos de ReplicatedStorage...")
+
+	-- Esperar ReplicatedStorage children con timeout explícito
+	local rsModules = {
+		"DroneController",
+		"DroneHUD",
+		"DroneAudio",
+		"DroneVFX",
+		"DroneCargo",
+		"DeliveryManager",
+		"CyberGoggles",
+	}
+
+	for _, modName in rsModules do
+		local child = ReplicatedStorage:WaitForChild(modName, 20)
+		if not child then
+			warn("[CLIENTE] TIMEOUT esperando módulo:", modName)
+			setBtn("ERROR: falta " .. modName, 255, 80, 80)
+			return
+		end
+		dbg("OK: " .. modName)
+	end
+
+	-- Cargar CyberGoggles
+	local okGoggles, gogglesResult = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("CyberGoggles", 5) :: ModuleScript)
+	end)
+	if okGoggles then
+		CyberGoggles = gogglesResult
+		dbg("CyberGoggles cargado OK")
+	else
+		warn("[CLIENTE] CyberGoggles falló:", gogglesResult)
+	end
+
+	-- Equipar gafas en avatar actual y futuros spawns
+	local function setupGoggles(char: Model)
+		if CyberGoggles then
+			pcall(function() CyberGoggles.Attach(char) end)
+		end
+	end
+	if localPlayer.Character then setupGoggles(localPlayer.Character) end
+	localPlayer.CharacterAdded:Connect(setupGoggles)
+
+	-- Cargar DroneController (carga lazy: los sub-módulos se cargan dentro de new())
+	local okCtrl, ctrlResult = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("DroneController", 5) :: ModuleScript)
+	end)
+	if not okCtrl then
+		warn("[CLIENTE] DroneController no cargó:", ctrlResult)
+		setBtn("ERROR DroneController", 255, 80, 80)
+		return
+	end
+	DroneController = ctrlResult
+	dbg("DroneController módulo OK")
+
+	-- Esperar el dron en Workspace
+	dbg("Esperando TestDrone en Workspace...")
+	local droneEntity = Workspace:WaitForChild("TestDrone", 20) :: Instance?
+	if not droneEntity then
+		warn("[CLIENTE] TestDrone no encontrado en Workspace tras 20s!")
+		setBtn("ERROR: TestDrone no encontrado", 255, 80, 80)
+		return
+	end
+	dbg("TestDrone encontrado: " .. droneEntity:GetFullName())
+
+	-- Esperar RemoteEvent del servidor
+	local flightEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 10)
+	if not flightEvent then
+		warn("[CLIENTE] DroneFlightState RemoteEvent no encontrado!")
+	else
+		dbg("DroneFlightState RemoteEvent OK")
+	end
+
+	-- Crear instancia del controlador
+	dbg("Creando DroneController.new()...")
+	local okNew, newResult = pcall(function()
+		return DroneController.new(droneEntity)
+	end)
+	if not okNew then
+		warn("[CLIENTE] DroneController.new() falló:", newResult)
+		setBtn("ERROR new(): " .. tostring(newResult):sub(1, 30), 255, 80, 80)
+		return
+	end
+
+	myDrone    = newResult
+	droneReady = true
+	dbg("¡DRON LISTO! Presiona E para pilotar.")
+	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+	print("[CLIENTE v4] ¡Sistema de vuelo completamente inicializado!")
+end)
