@@ -29,17 +29,20 @@ export type DroneConfig = {
 	tiltSpeed           : number,
 	baseFOV             : number,
 	maxFOV              : number,
+	mouseSensitivity    : number?,
 }
 
 export type InputState = {
-	forward  : boolean,
-	backward : boolean,
-	left     : boolean,
-	right    : boolean,
-	up       : boolean,
-	down     : boolean,
-	turbo    : boolean,
-	brake    : boolean,
+	forward   : boolean,
+	backward  : boolean,
+	left      : boolean,
+	right     : boolean,
+	up        : boolean,
+	down      : boolean,
+	turbo     : boolean,
+	brake     : boolean,
+	turnLeft  : boolean,
+	turnRight : boolean,
 }
 
 ----------------------------------------------------------------------
@@ -49,18 +52,19 @@ export type InputState = {
 --               1.0 = llega en ~1s, 0.3 = llega en ~3s (más suave)
 ----------------------------------------------------------------------
 local DEFAULT_CONFIG: DroneConfig = {
-	cruiseSpeed     = 60,    -- velocidad crucero
-	turboSpeed      = 110,   -- velocidad turbo (Q)
-	verticalSpeed   = 35,    -- velocidad subir/bajar
-	accelRate       = 1.5,   -- aceleración horizontal suave (era 2.4 → muy rápido)
-	decelRate       = 0.8,   -- desaceleración al soltar
-	brakeRate       = 3.5,   -- frenado con X
-	vertAccelRate   = 1.8,   -- aceleración vertical
-	vertDecelRate   = 1.0,   -- desaceleración vertical
-	tiltAngle       = math.rad(18),
-	tiltSpeed       = 8,
-	baseFOV         = 70,
-	maxFOV          = 85,
+	cruiseSpeed      = 60,    -- velocidad crucero
+	turboSpeed       = 110,   -- velocidad turbo (Q)
+	verticalSpeed    = 35,    -- velocidad subir/bajar
+	accelRate        = 1.5,   -- aceleración horizontal suave (era 2.4 → muy rápido)
+	decelRate        = 0.8,   -- desaceleración al soltar
+	brakeRate        = 3.5,   -- frenado con X
+	vertAccelRate    = 1.8,   -- aceleración vertical
+	vertDecelRate    = 1.0,   -- desaceleración vertical
+	tiltAngle        = math.rad(18),
+	tiltSpeed        = 8,
+	baseFOV          = 70,
+	maxFOV           = 85,
+	mouseSensitivity = 0.003,
 }
 
 ----------------------------------------------------------------------
@@ -225,20 +229,24 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 
 		-- estado de inputs
 		inputState = {
-			forward  = false,
-			backward = false,
-			left     = false,
-			right    = false,
-			up       = false,
-			down     = false,
-			turbo    = false,
-			brake    = false,
+			forward   = false,
+			backward  = false,
+			left      = false,
+			right     = false,
+			up        = false,
+			down      = false,
+			turbo     = false,
+			brake     = false,
+			turnLeft  = false,
+			turnRight = false,
 		} :: InputState,
 
 		-- física
 		currentVelocity  = Vector3.zero,
 		currentPitch     = 0,
 		currentRoll      = 0,
+		flightYaw        = 0,
+		fpvPitch         = 0,
 		turboEnergy      = 100,
 
 		-- ═══ NUEVO: estado de combate y daño ═══
@@ -262,6 +270,8 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		connection       = nil :: RBXScriptConnection?,
 		inputBeganConn   = nil :: RBXScriptConnection?,
 		inputEndedConn   = nil :: RBXScriptConnection?,
+		mouseMoveConn    = nil :: RBXScriptConnection?,
+		charDiedConn     = nil :: RBXScriptConnection?,
 
 		-- camera
 		originalWalkSpeed  = 16,
@@ -301,6 +311,11 @@ function DroneController:StartFlying()
 	print("[DroneController] StartFlying() llamado")
 	self.isFlying = true
 
+	-- Inicializar rumbo a la orientación actual del dron
+	local _, initialYaw, _ = self.rootPart.CFrame:ToOrientation()
+	self.flightYaw = initialYaw
+	self.fpvPitch  = 0
+
 	-- Notificar servidor para desanclar y transferir network ownership
 	if self.flightStateEvent then
 		print("[DroneController] Disparando StartFlying al servidor...")
@@ -332,11 +347,27 @@ function DroneController:StartFlying()
 		pcall(function() self.cyberGoggles.SetOnline(char, true) end)
 	end
 
-	-- Enfocar cámara en dron
+	-- Auto-detener vuelo si el personaje muere
+	if char then
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			self.charDiedConn = hum.Died:Connect(function()
+				self:StopFlying()
+			end)
+		end
+	end
+
+	-- Configurar cámara según modo inicial
 	local camera = Workspace.CurrentCamera
 	if camera then
-		camera.CameraType    = Enum.CameraType.Custom
-		camera.CameraSubject = self.rootPart
+		if self.isFPV then
+			camera.CameraType = Enum.CameraType.Scriptable
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		else
+			camera.CameraType    = Enum.CameraType.Custom
+			camera.CameraSubject = self.rootPart
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end
 	end
 
 	-- Asegurar que DeliveryManager esté activo para misiones y entregas
@@ -395,33 +426,34 @@ function DroneController:StartFlying()
 
 		local maxSpeed = (if isBoosting then self.config.turboSpeed else self.config.cruiseSpeed) * (self.cargoSpeedMult or 1.0)
 
-		-- Vectores de cámara aplanados al plano horizontal
+		-- Actualizar rumbo y orientación de vuelo
 		local cam = Workspace.CurrentCamera
-		local camCF = if cam then cam.CFrame else self.rootPart.CFrame
-
-		local rawLook  = camCF.LookVector
-		local flatLook = Vector3.new(rawLook.X, 0, rawLook.Z)
-		local fwd: Vector3
-		if flatLook.Magnitude > 0.001 then
-			fwd = flatLook.Unit
-		else
-			fwd = Vector3.new(0, 0, -1)
+		if cam and not self.isFPV then
+			-- En 3ra persona: el rumbo del dron sigue la dirección orbital de la cámara
+			local camCF = cam.CFrame
+			local rawLook  = camCF.LookVector
+			local flatLook = Vector3.new(rawLook.X, 0, rawLook.Z)
+			if flatLook.Magnitude > 0.001 then
+				self.flightYaw = math.atan2(-flatLook.X, -flatLook.Z)
+			end
 		end
 
-		local rawRight  = camCF.RightVector
-		local flatRight = Vector3.new(rawRight.X, 0, rawRight.Z)
-		local rgt: Vector3
-		if flatRight.Magnitude > 0.001 then
-			rgt = flatRight.Unit
-		else
-			rgt = Vector3.new(1, 0, 0)
+		-- Giro con teclado (flechas izquierda/derecha)
+		local keyTurn = (if self.inputState.turnLeft then 1 else 0) - (if self.inputState.turnRight then 1 else 0)
+		if keyTurn ~= 0 then
+			self.flightYaw = self.flightYaw + keyTurn * (math.rad(90) * dt)
 		end
+
+		-- Vectores de movimiento horizontal derivados del rumbo actual
+		local yawCF = CFrame.Angles(0, self.flightYaw, 0)
+		local fwd = yawCF.LookVector
+		local rgt = yawCF.RightVector
 
 		-- Input direccional
 		local moveZ = (if self.inputState.forward then 1 else 0) - (if self.inputState.backward then 1 else 0)
 		local moveX = (if self.inputState.right then 1 else 0) - (if self.inputState.left then 1 else 0)
 		local moveY = (if self.inputState.up then 1 else 0) - (if self.inputState.down then 1 else 0)
-		-- Nota: forward = W = fwd (delante de la cámara)
+		-- Nota: forward = W = fwd (delante según el rumbo del piloto)
 
 		local isBraking    = self.inputState.brake
 		local isThrottling = (math.abs(moveZ) + math.abs(moveX)) > 0.01
@@ -464,24 +496,36 @@ function DroneController:StartFlying()
 		self.currentVelocity = Vector3.new(newH.X, newY, newH.Z)
 		self.linearVelocity.VectorVelocity = self.currentVelocity
 
-		-- Inclinación del dron (tilt)
+		-- Inclinación física del dron (tilt)
+		-- targetPitch: morro baja al acelerar adelante (-moveZ)
+		-- targetRoll: signo NEGATIVO para que al moverse a la derecha el dron incline su lado derecho abajo (aerodinámica real, no levanta el ala contra el viento)
 		local speedRatio  = math.clamp(self.currentVelocity.Magnitude / self.config.cruiseSpeed, 0, 1)
 		local targetPitch = -moveZ * self.config.tiltAngle * math.max(0.3, speedRatio)
-		local targetRoll  = moveX * self.config.tiltAngle
+		local targetRoll  = -moveX * self.config.tiltAngle
 
 		local tFactor = math.clamp(dt * self.config.tiltSpeed, 0, 1)
 		self.currentPitch = self.currentPitch + (targetPitch - self.currentPitch) * tFactor
 		self.currentRoll  = self.currentRoll  + (targetRoll  - self.currentRoll)  * tFactor
 
-		local baseRot = CFrame.lookAt(Vector3.zero, fwd, Vector3.yAxis)
-		self.alignOrientation.CFrame = baseRot * CFrame.Angles(self.currentPitch, 0, self.currentRoll)
+		self.alignOrientation.CFrame = yawCF * CFrame.Angles(self.currentPitch, 0, self.currentRoll)
 
-		-- Cámara FPV / Chase
+		-- Cámara FPV / Chase (3ra persona)
 		if cam then
 			if self.isFPV then
 				cam.CameraType = Enum.CameraType.Scriptable
-				local eyePos = self.rootPart.CFrame:PointToWorldSpace(Vector3.new(0, 0.3, -self.rootPart.Size.Z * 0.5))
-				cam.CFrame = CFrame.lookAt(eyePos, eyePos + self.rootPart.CFrame.LookVector, self.rootPart.CFrame.UpVector)
+				-- Posición en cabina delantera ligeramente elevada
+				local cockpitOffset = Vector3.new(0, 0.45, -self.rootPart.Size.Z * 0.5 - 0.2)
+				local eyePos = self.rootPart.CFrame:PointToWorldSpace(cockpitOffset)
+
+				-- Orientación: rumbo del dron + pitch de vista de piloto (mouse) + sutil inclinación física
+				local camRot = CFrame.Angles(0, self.flightYaw, 0)
+					* CFrame.Angles(self.currentPitch * 0.5 + self.fpvPitch, 0, self.currentRoll * 0.35)
+
+				cam.CFrame = CFrame.new(eyePos) * camRot
+
+				-- FOV dinámico en FPV para dar sensación de velocidad inmersiva
+				local targetFOV = 85 + (100 - 85) * speedRatio
+				cam.FieldOfView = cam.FieldOfView + (targetFOV - cam.FieldOfView) * math.clamp(dt * 6, 0, 1)
 			else
 				if cam.CameraType ~= Enum.CameraType.Custom then
 					cam.CameraType = Enum.CameraType.Custom
@@ -550,6 +594,12 @@ function DroneController:StopFlying()
 		self.connection = nil
 	end
 
+	-- Desconectar listener de muerte de personaje
+	if self.charDiedConn then
+		self.charDiedConn:Disconnect()
+		self.charDiedConn = nil
+	end
+
 	-- Parar velocidad
 	self.currentVelocity = Vector3.zero
 	self.linearVelocity.VectorVelocity = Vector3.zero
@@ -573,6 +623,11 @@ function DroneController:StopFlying()
 
 	-- Desconectar inputs
 	self:UnbindInputs()
+
+	-- Restaurar cursor y estado de cámara FPV
+	pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
+	self.isFPV = false
+	self.fpvPitch = 0
 
 	-- Restaurar personaje
 	self:UnlockPlayerCharacter()
@@ -627,11 +682,19 @@ end
 ----------------------------------------------------------------------
 function DroneController:BindInputs()
 	self:UnbindInputs()
-	print("[DroneController] BindInputs() - WASD/Space/Shift/Q/X/V activos")
+	print("[DroneController] BindInputs() - WASD/Flechas/Space/Shift/Q/X/V activos")
 
 	self.inputBeganConn = UserInputService.InputBegan:Connect(function(input: InputObject, _gpe: boolean)
 		local focused = UserInputService:GetFocusedTextBox()
 		if focused then return end
+
+		-- Si hace click mientras vuela en FPV, reactivar bloqueo de cursor centrado
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if self.isFlying and self.isFPV then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+			end
+			return
+		end
 
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 		local k = input.KeyCode
@@ -644,7 +707,25 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.C then self.inputState.down = true
 		elseif k == Enum.KeyCode.Q          then self.inputState.turbo     = true
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = true
-		elseif k == Enum.KeyCode.V          then self.isFPV = not self.isFPV
+		elseif k == Enum.KeyCode.Left       then self.inputState.turnLeft  = true
+		elseif k == Enum.KeyCode.Right      then self.inputState.turnRight = true
+		elseif k == Enum.KeyCode.V          then
+			self.isFPV = not self.isFPV
+			local camera = Workspace.CurrentCamera
+			if self.isFPV then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+				self.fpvPitch = 0
+				if camera then
+					camera.CameraType = Enum.CameraType.Scriptable
+				end
+			else
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+				if camera then
+					camera.CameraType = Enum.CameraType.Custom
+					camera.CameraSubject = self.rootPart
+					camera.FieldOfView = self.config.baseFOV
+				end
+			end
 		elseif k == Enum.KeyCode.G          then
 			if self.cargo and not self.cargo.isLoaded then
 				if self.hud and (self.hud :: any).ShowHint then
@@ -716,6 +797,21 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.C then self.inputState.down = false
 		elseif k == Enum.KeyCode.Q          then self.inputState.turbo     = false
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = false
+		elseif k == Enum.KeyCode.Left       then self.inputState.turnLeft  = false
+		elseif k == Enum.KeyCode.Right      then self.inputState.turnRight = false
+		end
+	end)
+
+	-- Giro suave con el mouse en primera persona (FPV)
+	self.mouseMoveConn = UserInputService.InputChanged:Connect(function(input: InputObject, _gpe: boolean)
+		if not self.isFlying then return end
+		if not self.isFPV then return end
+
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Delta
+			local sens = self.config.mouseSensitivity or 0.003
+			self.flightYaw = self.flightYaw - delta.X * sens
+			self.fpvPitch  = math.clamp(self.fpvPitch - delta.Y * sens, math.rad(-60), math.rad(60))
 		end
 	end)
 end
@@ -723,16 +819,19 @@ end
 function DroneController:UnbindInputs()
 	if self.inputBeganConn then self.inputBeganConn:Disconnect(); self.inputBeganConn = nil end
 	if self.inputEndedConn then self.inputEndedConn:Disconnect(); self.inputEndedConn = nil end
+	if self.mouseMoveConn  then self.mouseMoveConn:Disconnect();  self.mouseMoveConn  = nil end
 
 	-- Resetear todos los estados de input
-	self.inputState.forward  = false
-	self.inputState.backward = false
-	self.inputState.left     = false
-	self.inputState.right    = false
-	self.inputState.up       = false
-	self.inputState.down     = false
-	self.inputState.turbo    = false
-	self.inputState.brake    = false
+	self.inputState.forward   = false
+	self.inputState.backward  = false
+	self.inputState.left      = false
+	self.inputState.right     = false
+	self.inputState.up        = false
+	self.inputState.down      = false
+	self.inputState.turbo     = false
+	self.inputState.brake     = false
+	self.inputState.turnLeft  = false
+	self.inputState.turnRight = false
 end
 
 ----------------------------------------------------------------------

@@ -323,7 +323,7 @@ end)
 -- 4. ECONOMÍA Y VALIDACIÓN SERVER-SIDE ANTI-EXPLOIT
 ----------------------------------------------------------------------
 local lastDeliveryTime: { [number]: number } = {}
-local CURRENCY_NAME = "PIGICOINS"  -- Moneda del juego
+local CURRENCY_NAME = "PELAOCOINS"  -- Moneda del juego
 local MIN_DELIVERY_INTERVAL = 2.0  -- Cooldown mínimo entre entregas por jugador
 
 Players.PlayerAdded:Connect(function(player)

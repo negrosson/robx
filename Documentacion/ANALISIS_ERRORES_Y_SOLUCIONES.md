@@ -326,5 +326,37 @@ Al modificar el nombre de la recompensa/moneda en `src/server/Main.server.luau` 
    * Todas las etiquetas del HUD (`missionRewardLabel`, `successText`) ahora muestran dinámicamente `+250 PIGICOINS` (o el nombre que el usuario asigne) sin requerir reescrituras de código.
 
 ---
+
+## 13. Pulido de Primera Persona (FPV) con Giro de Mouse y Corrección Aerodinámica de Inclinación Lateral (Roll)
+
+### 🔍 1. Diagnóstico de Causas Raíz
+1. **Primera Persona (FPV) Bloqueada en Línea Recta:**
+   * Al presionar `[V]` para pasar a primera persona, `cam.CameraType = Enum.CameraType.Scriptable` desactivaba por completo el sistema orbital de cámara nativo de Roblox.
+   * `DroneController.luau` carecía de un listener de movimiento de mouse (`UserInputService.InputChanged`).
+   * No se bloqueaba el cursor al centro de la pantalla (`UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter`), de modo que el puntero se movía libremente por la pantalla sin registrar giros.
+   * La orientación del dron se calculaba rígidamente en un bucle circular a partir del propio LookVector del dron, impidiendo que el jugador pudiera virar o mirar hacia los lados.
+2. **Inclinación Invertida hacia los Lados (Roll Invertido):**
+   * En `targetRoll = moveX * self.config.tiltAngle`, al presionar `D` (`moveX = 1`), el valor de rotación en el eje Z era positivo.
+   * En el sistema de coordenadas de Roblox, una rotación positiva en Z eleva el lado derecho (`RightVector.Y > 0`) hacia el cielo.
+   * Esto exponía el vientre del dron al aire frontal/lateral como una cometa levantada contra el viento, generando una sensación física contraria a la aerodinámica real de un cuadricóptero (donde para desplazarse a la derecha, el dron debe ladearse hacia abajo a la derecha para dirigir el empuje).
+
+### 🛠️ 2. Solución de Ingeniería Implementada
+1. **Control Total de Giro y Mirada en Primera Persona (FPV):**
+   * **Variables de Rumbo Dinámico:** Se añadieron `self.flightYaw` (rumbo horizontal en radianes) y `self.fpvPitch` (ángulo de visión vertical del piloto).
+   * **Giro de Vuelo con Mouse:** Se vinculó `UserInputService.InputChanged` para capturar `MouseMovement`, permitiendo al jugador girar 360° en vuelo con el mouse con sensibilidad calibrada (`0.003` rad/px) y mirar verticalmente arriba/abajo dentro de $\pm 60^\circ$.
+   * **Bloqueo Centrado del Cursor (`LockCenter`):** Al activar FPV (`[V]`), el cursor se ancla y oculta en el centro de la pantalla. Al volver a 3ra persona o detener el vuelo, se restaura a `Default`. Al hacer clic en pantalla se reasegura el anclaje si el jugador abrió algún menú.
+   * **Soporte de Teclado:** Se añadió soporte para girar el rumbo también con las flechas del teclado (`Izquierda` y `Derecha`).
+   * **Transición Fluida 1ra / 3ra Persona:** En 3ra persona, `flightYaw` se sincroniza automáticamente con la rotación orbital de la cámara; al entrar a FPV, el dron continúa exactamente en la misma dirección sin saltos bruscos.
+   * **Sensación Cinemática de Cabina:** La cámara en FPV se posicionó en la parte delantera superior del fuselaje (`Vector3.new(0, 0.45, -size.Z * 0.5 - 0.2)`), con una inclinación física sutil sincronizada con el balanceo del fuselaje y un campo visual dinámico (FOV) que se expande de 85° a 100° con el turbo.
+2. **Corrección Aerodinámica del Roll Lateral:**
+   * Se invirtió la fórmula a:
+     ```luau
+     local targetRoll = -moveX * self.config.tiltAngle
+     ```
+   * Al presionar `D` (derecha), el lado derecho del dron desciende y el lado izquierdo se eleva, inclinando la aeronave hacia la derecha para dirigir los vectores de propulsión y cortar el aire aerodinámicamente.
+   * Al presionar `A` (izquierda), el lado izquierdo desciende simétricamente.
+   * El horizonte artificial holográfico del HUD se sincroniza automáticamente con la inclinación real.
+
+---
 *Fin del documento de auditoría técnica.*
 
