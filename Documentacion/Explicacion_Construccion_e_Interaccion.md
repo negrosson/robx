@@ -214,3 +214,4 @@ Al recibir `deliveryConfirmedEvent`:
 
 ---
 *Documento técnico generado para el proyecto Cyber Delivery Tycoon.*
+
