@@ -323,6 +323,7 @@ end)
 -- 4. ECONOMÍA Y VALIDACIÓN SERVER-SIDE ANTI-EXPLOIT
 ----------------------------------------------------------------------
 local lastDeliveryTime: { [number]: number } = {}
+local CURRENCY_NAME = "PIGICOINS"  -- Moneda del juego
 local MIN_DELIVERY_INTERVAL = 2.0  -- Cooldown mínimo entre entregas por jugador
 
 Players.PlayerAdded:Connect(function(player)
@@ -331,7 +332,7 @@ Players.PlayerAdded:Connect(function(player)
 	leaderstats.Parent = player
 
 	local credits = Instance.new("IntValue")
-	credits.Name = "CyberCréditos"
+	credits.Name = CURRENCY_NAME
 	credits.Value = 150
 	credits.Parent = leaderstats
 
@@ -404,16 +405,28 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then return end
 
-	local credits = leaderstats:FindFirstChild("CyberCréditos") :: IntValue?
+	-- Buscar el stat de créditos de forma robusta por nombre o por tipo
+	local credits: IntValue? = (leaderstats:FindFirstChild(CURRENCY_NAME) or leaderstats:FindFirstChild("PIGICOINS") or leaderstats:FindFirstChild("CyberCréditos")) :: IntValue?
+	if not credits then
+		for _, stat in ipairs(leaderstats:GetChildren()) do
+			if stat:IsA("IntValue") and stat.Name ~= "Entregas" then
+				credits = stat
+				break
+			end
+		end
+	end
+
 	local deliveries = leaderstats:FindFirstChild("Entregas") :: IntValue?
 
 	if credits and deliveries then
 		local reward = 250
 		credits.Value += reward
 		deliveries.Value += 1
-		print(string.format("[Servidor SEGURO] Entrega validada en %s para %s (+%d ₵)", padName, player.Name, reward))
+		print(string.format("[Servidor SEGURO] Entrega validada en %s para %s (+%d %s)", padName, player.Name, reward, credits.Name))
 
 		-- Confirmar al cliente para activar animaciones/HUD legítimas
 		deliveryConfirmedEvent:FireClient(player, padName, reward)
+	else
+		warn(string.format("[Servidor] Error al premiar a %s: credits o deliveries no encontrados en leaderstats", player.Name))
 	end
 end)

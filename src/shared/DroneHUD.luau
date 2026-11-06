@@ -38,6 +38,23 @@ local COLOR_NEON_YELLOW = Color3.fromRGB(255, 215, 0)
 local COLOR_WARN = Color3.fromRGB(255, 70, 70)
 local COLOR_TEXT_MUTED = Color3.fromRGB(140, 180, 200)
 
+local DEFAULT_CURRENCY_NAME = "PIGICOINS"
+
+local function getCurrencyName(): string
+	local player = Players.LocalPlayer
+	if player then
+		local leaderstats = player:FindFirstChild("leaderstats")
+		if leaderstats then
+			for _, child in ipairs(leaderstats:GetChildren()) do
+				if child:IsA("IntValue") and child.Name ~= "Entregas" then
+					return child.Name
+				end
+			end
+		end
+	end
+	return DEFAULT_CURRENCY_NAME
+end
+
 function DroneHUD.new(): HUDInstance
 	local player = Players.LocalPlayer
 	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
@@ -349,7 +366,7 @@ function DroneHUD.new(): HUDInstance
 	missionRewardLabel.Position = UDim2.fromOffset(10, 48)
 	missionRewardLabel.BackgroundTransparency = 1
 	missionRewardLabel.Font = Enum.Font.RobotoMono
-	missionRewardLabel.Text = "RECOMPENSA: +250 ₵"
+	missionRewardLabel.Text = string.format("RECOMPENSA: +250 %s", getCurrencyName())
 	missionRewardLabel.TextColor3 = COLOR_NEON_CYAN
 	missionRewardLabel.TextSize = 12
 	missionRewardLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -432,7 +449,7 @@ function DroneHUD.new(): HUDInstance
 	successText.Size = UDim2.new(1, 0, 1, 0)
 	successText.BackgroundTransparency = 1
 	successText.Font = Enum.Font.Code
-	successText.Text = "¡ENTREGA EXITOSA!\n+250 CYBER-CRÉDITOS"
+	successText.Text = string.format("¡ENTREGA EXITOSA!\n+250 %s", getCurrencyName())
 	successText.TextColor3 = COLOR_NEON_YELLOW
 	successText.TextSize = 16
 	successText.Parent = successPopup
@@ -521,7 +538,7 @@ function DroneHUD.Update(
 	-- 6. Tarjeta de misión
 	if targetDisplayName then
 		self.missionTargetLabel.Text = "DESTINO: " .. targetDisplayName
-		self.missionRewardLabel.Text = string.format("RECOMPENSA: +%d ₵", targetReward or 250)
+		self.missionRewardLabel.Text = string.format("RECOMPENSA: +%d %s", targetReward or 250, getCurrencyName())
 	end
 
 	if landingProgress > 0 then
@@ -562,7 +579,7 @@ function DroneHUD.Update(
 end
 
 function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName: string)
-	self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d CYBER-CRÉDITOS", targetName:upper(), reward)
+	self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s", targetName:upper(), reward, getCurrencyName())
 	self.successText.TextColor3 = COLOR_NEON_YELLOW
 	self.successPopup.Visible = true
 	self.successPopup.Size = UDim2.fromOffset(360, 60)

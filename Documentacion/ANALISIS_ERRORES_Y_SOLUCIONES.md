@@ -287,5 +287,44 @@ Warning: [DroneController] Falló require(DeliveryManager) bajo demanda: Request
    * Se reposicionó el recuadro de misión a `Y = 160` studs para evitar que la lista de jugadores de Roblox Studio lo oculte.
 
 ---
+
+## 12. Desacople del Nombre de la Moneda («PIGICOINS») y Resiliencia en Validación Server-Side
+
+### 🔍 1. Diagnóstico de Causa Raíz
+Al modificar el nombre de la recompensa/moneda en `src/server/Main.server.luau` de `"CyberCréditos"` a `"PIGICOINS"`, las entregas dejaron de funcionar por completo.
+1. **Búsqueda Rígida en el Servidor (`claimDeliveryEvent`):**
+   En el evento del servidor `claimDeliveryEvent.OnServerEvent`, la lógica buscaba estrictamente:
+   ```luau
+   local credits = leaderstats:FindFirstChild("CyberCréditos") :: IntValue?
+   local deliveries = leaderstats:FindFirstChild("Entregas") :: IntValue?
+
+   if credits and deliveries then
+       credits.Value += reward
+       deliveries.Value += 1
+       deliveryConfirmedEvent:FireClient(player, padName, reward)
+   end
+   ```
+2. **Fallo Silencioso de Validación:**
+   Al renombrar el valor en `leaderstats` a `"PIGICOINS"`, `FindFirstChild("CyberCréditos")` retornaba `nil`.
+   Como resultado, la condición `if credits and deliveries then` se evaluaba como `false`.
+3. **Bloqueo del Ciclo de Entrega en Cliente:**
+   Dado que el servidor nunca ejecutaba `deliveryConfirmedEvent:FireClient()`, el cliente jamás recibía la confirmación. Sin esa confirmación:
+   * La caja física nunca se desacoplaba (`weld:Destroy()` no ocurría).
+   * El HUD nunca mostraba el popup de éxito ni actualizaba la misión.
+   * El jugador quedaba permanentemente atascado creyendo que la entrega no funcionaba.
+
+### 🛠️ 2. Solución de Ingeniería Implementada
+1. **Centralización y Búsqueda Robusta en Servidor (`Main.server.luau`):**
+   * Se definió la constante `local CURRENCY_NAME = "PIGICOINS"`.
+   * En `claimDeliveryEvent`, la resolución de créditos ahora utiliza un enfoque multi-nivel:
+     1. Busca `leaderstats:FindFirstChild(CURRENCY_NAME)`.
+     2. Fallback a `"PIGICOINS"` y `"CyberCréditos"`.
+     3. Fallback inteligente: itera cualquier `IntValue` dentro de `leaderstats` que no sea `"Entregas"`.
+   * Se añadió un log de advertencia claro (`warn`) en lugar de fallar en silencio si alguna estadística no se encuentra.
+2. **Sincronización Dinámica en el HUD del Cliente (`DroneHUD.luau`):**
+   * Se implementó la función auxiliar `getCurrencyName()` que lee directamente el nombre de la moneda configurada en `leaderstats` del jugador local en tiempo de ejecución.
+   * Todas las etiquetas del HUD (`missionRewardLabel`, `successText`) ahora muestran dinámicamente `+250 PIGICOINS` (o el nombre que el usuario asigne) sin requerir reescrituras de código.
+
+---
 *Fin del documento de auditoría técnica.*
 
