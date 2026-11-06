@@ -1,60 +1,73 @@
 --!strict
 -- src/shared/DroneCargo.luau
--- Sistema de Contenedor y Carga Magnética con Haz Tractor + Inercia Dinámica Real
+-- Sistema de Bahía de Carga (Capacidad: 3 Paquetes) con Haces Tractores Magnéticos e Inercia Dinámica
+local Debris = game:GetService("Debris")
+
 local DroneCargo = {}
 DroneCargo.__index = DroneCargo
 
 -- Constantes de física de carga
-local INERTIA_ALPHA_DEFAULT = 0.040  -- α por defecto si el dron no especifica
-local EK_DETONATION_THRESHOLD = 4000  -- Joules (Ek = 0.5*M*v²) para detonar carga inestable
-local CARGO_MASS_DEFAULT    = 10     -- kg por defecto
-
-export type CargoInstance = {
-	rootPart     : BasePart,
-	cargoModel   : Model,
-	cargoBox     : BasePart,
-	weld         : WeldConstraint,
-	beams        : { Beam },
-	isLoaded     : boolean,
-	-- NUEVO: propiedades de masa e inercia
-	cargoMass    : number,  -- kg del paquete actual
-	inertiaAlpha : number,  -- α para la fórmula VelocidadEfectiva
-	isUnstable   : boolean, -- carga inestable (detona en impacto fuerte)
-}
+local MAX_CARGO_CAPACITY = 3
+local INERTIA_ALPHA_DEFAULT = 0.025
+local CARGO_MASS_PER_PKG = 5.0 -- 5 kg por paquete (15 kg carga completa)
+local EK_DETONATION_THRESHOLD = 4000
 
 local COLOR_CARGO_NEON = Color3.fromRGB(0, 255, 230)
 local COLOR_CARGO_BODY = Color3.fromRGB(20, 25, 35)
 
-function DroneCargo.new(dronePart: BasePart): CargoInstance
-	local existingCargo = dronePart:FindFirstChild("DroneCargoContainer")
-	if existingCargo then
-		existingCargo:Destroy()
-	end
+export type CargoPackage = {
+	model: Model,
+	box: BasePart,
+	band: BasePart,
+	weld: WeldConstraint,
+	beam: Beam,
+	index: number,
+}
 
-	local cargoModel = Instance.new("Model")
-	cargoModel.Name = "DroneCargoContainer"
+export type CargoInstance = {
+	rootPart: BasePart,
+	cargoContainer: Model,
+	packages: { CargoPackage },
+	packagesCount: number,
+	maxPackages: number,
+	isLoaded: boolean,
+	cargoMass: number,
+	inertiaAlpha: number,
+	isUnstable: boolean,
+}
 
-	-- Contenedor de carga físico
+-- Offsets horizontales bajo la panza del dron para los 3 paquetes
+local PACKAGE_OFFSETS = {
+	Vector3.new(-1.25, -1.2, 0), -- Paquete 1 (Izquierda)
+	Vector3.new( 0.00, -1.2, 0), -- Paquete 2 (Centro)
+	Vector3.new( 1.25, -1.2, 0), -- Paquete 3 (Derecha)
+}
+
+local function createSinglePackage(dronePart: BasePart, index: number, offset: Vector3): CargoPackage
+	local pkgModel = Instance.new("Model")
+	pkgModel.Name = "CargoPackage_" .. tostring(index)
+
+	-- Caja física del paquete
 	local cargoBox = Instance.new("Part")
 	cargoBox.Name = "CargoBox"
-	cargoBox.Size = Vector3.new(2.8, 1.8, 2.8)
+	cargoBox.Size = Vector3.new(1.15, 1.0, 2.2)
 	cargoBox.Material = Enum.Material.Metal
 	cargoBox.Color = COLOR_CARGO_BODY
 	cargoBox.CanCollide = false
 	cargoBox.Massless = true
-	cargoBox.CFrame = dronePart.CFrame * CFrame.new(0, -dronePart.Size.Y * 0.7 - 1.2, 0)
-	cargoBox.Parent = cargoModel
+	cargoBox.CFrame = dronePart.CFrame * CFrame.new(offset)
+	cargoBox.Parent = pkgModel
 
-	-- Bordes luminosos del contenedor
+	-- Tira luminosa perimetral de neón
 	local cargoBand = Instance.new("Part")
 	cargoBand.Name = "NeonBand"
-	cargoBand.Size = Vector3.new(2.9, 0.4, 2.9)
+	cargoBand.Size = Vector3.new(1.2, 0.25, 2.25)
 	cargoBand.Material = Enum.Material.Neon
 	cargoBand.Color = COLOR_CARGO_NEON
 	cargoBand.CanCollide = false
 	cargoBand.Massless = true
 	cargoBand.CFrame = cargoBox.CFrame
-	cargoBand.Parent = cargoModel
+	cargoBand.Parent = pkgModel
 
 	local bandWeld = Instance.new("WeldConstraint")
 	bandWeld.Part0 = cargoBox
@@ -67,11 +80,10 @@ function DroneCargo.new(dronePart: BasePart): CargoInstance
 	weld.Part1 = cargoBox
 	weld.Parent = cargoBox
 
-	-- Haz tractor magnético holográfico (Beams)
-	local beams: { Beam } = {}
+	-- Haz tractor magnético individual
 	local attDrone = Instance.new("Attachment")
-	attDrone.Name = "TractorAttDrone"
-	attDrone.Position = Vector3.new(0, -dronePart.Size.Y * 0.5, 0)
+	attDrone.Name = "TractorAttDrone_" .. tostring(index)
+	attDrone.Position = Vector3.new(offset.X, -dronePart.Size.Y * 0.5, 0)
 	attDrone.Parent = dronePart
 
 	local attCargo = Instance.new("Attachment")
@@ -84,233 +96,248 @@ function DroneCargo.new(dronePart: BasePart): CargoInstance
 	tractorBeam.Attachment0 = attDrone
 	tractorBeam.Attachment1 = attCargo
 	tractorBeam.Color = ColorSequence.new(COLOR_CARGO_NEON)
-	tractorBeam.Width0 = 0.8
-	tractorBeam.Width1 = 0.3
-	tractorBeam.Transparency = NumberSequence.new(0.35)
+	tractorBeam.Width0 = 0.4
+	tractorBeam.Width1 = 0.15
+	tractorBeam.Transparency = NumberSequence.new(0.3)
 	tractorBeam.LightEmission = 1
 	tractorBeam.FaceCamera = true
 	tractorBeam.Parent = cargoBox
-	table.insert(beams, tractorBeam)
 
-	cargoModel.Parent = dronePart
+	return {
+		model = pkgModel,
+		box   = cargoBox,
+		band  = cargoBand,
+		weld  = weld,
+		beam  = tractorBeam,
+		index = index,
+	}
+end
+
+function DroneCargo.new(dronePart: BasePart): CargoInstance
+	local existingCargo = dronePart:FindFirstChild("DroneCargoContainer")
+	if existingCargo then
+		existingCargo:Destroy()
+	end
+
+	local cargoContainer = Instance.new("Model")
+	cargoContainer.Name = "DroneCargoContainer"
+	cargoContainer.Parent = dronePart
+
+	local packages: { CargoPackage } = {}
+	for i = 1, MAX_CARGO_CAPACITY do
+		local pkg = createSinglePackage(dronePart, i, PACKAGE_OFFSETS[i])
+		pkg.model.Parent = cargoContainer
+		table.insert(packages, pkg)
+	end
 
 	local self: CargoInstance = {
-		rootPart = dronePart,
-		cargoModel = cargoModel,
-		cargoBox = cargoBox,
-		weld = weld,
-		beams = beams,
-		isLoaded = true,
-		-- NUEVO: estado de masa e inercia
-		cargoMass    = CARGO_MASS_DEFAULT,
-		inertiaAlpha = INERTIA_ALPHA_DEFAULT,
-		isUnstable   = false,
+		rootPart       = dronePart,
+		cargoContainer = cargoContainer,
+		packages       = packages,
+		packagesCount  = #packages,
+		maxPackages    = MAX_CARGO_CAPACITY,
+		isLoaded       = true,
+		cargoMass      = #packages * CARGO_MASS_PER_PKG,
+		inertiaAlpha   = INERTIA_ALPHA_DEFAULT,
+		isUnstable     = false,
 	}
 
+	print(string.format("[DroneCargo v5] Bodega de carga inicializada: %d/%d paquetes listos.", self.packagesCount, self.maxPackages))
 	return setmetatable(self, DroneCargo) :: any
 end
 
-function DroneCargo.DeliverAndReload(self: CargoInstance, dropPosition: Vector3)
-	if not self.isLoaded then
-		print("[DroneCargo] No hay carga para soltar actualmente (recargando...).")
-		return
+-- Desacopla y entrega un único paquete físicamente en el helipuerto
+function DroneCargo.DeliverOnePackage(self: CargoInstance, dropPosition: Vector3): (boolean, number)
+	if self.packagesCount <= 0 or #self.packages == 0 then
+		print("[DroneCargo] ¡Bodega vacía! No quedan paquetes para entregar. Regresa a Base.")
+		return false, 0
 	end
 
-	self.isLoaded = false
-	print("[DroneCargo] ¡Soltando paquete de entrega físicamente por gravedad!")
+	-- Despachar el último paquete de la fila
+	local pkg = table.remove(self.packages)
+	if not pkg then return false, 0 end
 
-	-- 1. Apagar haz tractor magnético
-	for _, beam in ipairs(self.beams) do
-		beam.Enabled = false
-	end
+	print(string.format("[DroneCargo] ¡Soltando paquete #%d físicamente por gravedad!", pkg.index))
 
-	-- 2. Desenganchar físicamente el contenedor del dron
-	if self.weld and self.weld.Parent then
-		self.weld:Destroy()
-	end
+	-- 1. Apagar haz tractor y romper soldadura magnética
+	if pkg.beam then pkg.beam.Enabled = false end
+	if pkg.weld and pkg.weld.Parent then pkg.weld:Destroy() end
 
-	-- 3. Habilitar físicas completas en el paquete que cae
-	local droppedBox = self.cargoBox
+	-- 2. Activar colisiones y física completa en el paquete que cae
+	local droppedBox = pkg.box
 	if droppedBox and droppedBox.Parent then
 		droppedBox.Massless = false
 		droppedBox.CanCollide = true
 		droppedBox.Anchored = false
 
-		-- Transferir inercia real del vuelo + impulso hacia el helipuerto
+		-- Transferir inercia real del vuelo + empuje hacia el helipuerto
 		local droneVel = self.rootPart.AssemblyLinearVelocity
 		droppedBox.AssemblyLinearVelocity = droneVel + Vector3.new(0, -6, 0)
 		droppedBox.AssemblyAngularVelocity = Vector3.new(math.random(-2, 2), math.random(-2, 2), math.random(-2, 2))
 
-		-- Mover el modelo al Workspace exterior para que caiga libremente
-		if self.cargoModel then
-			self.cargoModel.Parent = workspace
-			game:GetService("Debris"):AddItem(self.cargoModel, 25)
+		-- Rótulo holográfico en el paquete entregado
+		local bbg = Instance.new("BillboardGui")
+		bbg.Name = "DeliveredTag"
+		bbg.Size = UDim2.fromOffset(180, 36)
+		bbg.StudsOffset = Vector3.new(0, 1.4, 0)
+		bbg.AlwaysOnTop = true
+		bbg.MaxDistance = 120
+
+		local tagLabel = Instance.new("TextLabel")
+		tagLabel.Size = UDim2.fromScale(1, 1)
+		tagLabel.BackgroundTransparency = 1
+		tagLabel.Font = Enum.Font.Code
+		tagLabel.Text = "ENTREGADO // [VERIFICADO]"
+		tagLabel.TextColor3 = Color3.fromRGB(0, 255, 180)
+		tagLabel.TextSize = 13
+		tagLabel.TextStrokeTransparency = 0.2
+		tagLabel.Parent = bbg
+		bbg.Parent = droppedBox
+
+		-- Mover el modelo entregado a Workspace para que se asiente en la torre
+		if pkg.model then
+			pkg.model.Parent = workspace
+			Debris:AddItem(pkg.model, 35)
 		end
 	end
 
-	-- 4. Efecto de audio de desacople magnético
+	-- 3. Sonido de desacople magnético
 	local releaseSound = Instance.new("Sound")
 	releaseSound.SoundId = "rbxassetid://9114223170"
 	releaseSound.Volume = 0.8
 	releaseSound.Parent = self.rootPart
 	releaseSound:Play()
-	game:GetService("Debris"):AddItem(releaseSound, 2)
+	Debris:AddItem(releaseSound, 2)
 
-	-- 5. Recargar un nuevo paquete fresco tras 1.5 segundos
-	task.delay(1.5, function()
-		if not self.rootPart or not self.rootPart.Parent then return end
-		self:ReloadFreshCargo()
-	end)
+	-- 4. Actualizar estado
+	self.packagesCount = #self.packages
+	self.isLoaded = (self.packagesCount > 0)
+	self.cargoMass = self.packagesCount * CARGO_MASS_PER_PKG
+
+	print(string.format("[DroneCargo] Paquete entregado. Quedan %d/%d en bodega.", self.packagesCount, self.maxPackages))
+	return true, self.packagesCount
 end
 
-function DroneCargo.ReloadFreshCargo(self: CargoInstance)
-	local dronePart = self.rootPart
-
-	local cargoModel = Instance.new("Model")
-	cargoModel.Name = "DroneCargoContainer"
-
-	local cargoBox = Instance.new("Part")
-	cargoBox.Name = "CargoBox"
-	cargoBox.Size = Vector3.new(2.8, 1.8, 2.8)
-	cargoBox.Material = Enum.Material.Metal
-	cargoBox.Color = COLOR_CARGO_BODY
-	cargoBox.CanCollide = false
-	cargoBox.Massless = true
-	cargoBox.CFrame = dronePart.CFrame * CFrame.new(0, -dronePart.Size.Y * 0.7 - 1.2, 0)
-	cargoBox.Parent = cargoModel
-
-	local cargoBand = Instance.new("Part")
-	cargoBand.Name = "NeonBand"
-	cargoBand.Size = Vector3.new(2.9, 0.4, 2.9)
-	cargoBand.Material = Enum.Material.Neon
-	cargoBand.Color = if self.isUnstable then Color3.fromRGB(255, 160, 0) else COLOR_CARGO_NEON
-	cargoBand.CanCollide = false
-	cargoBand.Massless = true
-	cargoBand.CFrame = cargoBox.CFrame
-	cargoBand.Parent = cargoModel
-
-	local bandWeld = Instance.new("WeldConstraint")
-	bandWeld.Part0 = cargoBox
-	bandWeld.Part1 = cargoBand
-	bandWeld.Parent = cargoBox
-
-	local weld = Instance.new("WeldConstraint")
-	weld.Part0 = dronePart
-	weld.Part1 = cargoBox
-	weld.Parent = cargoBox
-
-	local attDrone = dronePart:FindFirstChild("TractorAttDrone") :: Attachment?
-	if not attDrone then
-		attDrone = Instance.new("Attachment")
-		attDrone.Name = "TractorAttDrone"
-		attDrone.Position = Vector3.new(0, -dronePart.Size.Y * 0.5, 0)
-		attDrone.Parent = dronePart
+-- Reabastece completamente la bodega de carga en la Base Central
+function DroneCargo.RestockAtBase(self: CargoInstance): (boolean, number)
+	if self.packagesCount >= self.maxPackages and self.isLoaded then
+		return false, self.packagesCount
 	end
 
-	local attCargo = Instance.new("Attachment")
-	attCargo.Name = "TractorAttCargo"
-	attCargo.Position = Vector3.new(0, cargoBox.Size.Y * 0.5, 0)
-	attCargo.Parent = cargoBox
+	-- Limpiar cualquier resto previo
+	for _, pkg in ipairs(self.packages) do
+		if pkg.model and pkg.model.Parent then pkg.model:Destroy() end
+	end
+	table.clear(self.packages)
 
-	table.clear(self.beams)
-	local tractorBeam = Instance.new("Beam")
-	tractorBeam.Name = "TractorBeam"
-	tractorBeam.Attachment0 = attDrone
-	tractorBeam.Attachment1 = attCargo
-	tractorBeam.Color = ColorSequence.new(if self.isUnstable then Color3.fromRGB(255, 160, 0) else COLOR_CARGO_NEON)
-	tractorBeam.Width0 = 0.8
-	tractorBeam.Width1 = 0.3
-	tractorBeam.Transparency = NumberSequence.new(0.35)
-	tractorBeam.LightEmission = 1
-	tractorBeam.FaceCamera = true
-	tractorBeam.Parent = cargoBox
-	table.insert(self.beams, tractorBeam)
+	if not self.cargoContainer or not self.cargoContainer.Parent then
+		self.cargoContainer = Instance.new("Model")
+		self.cargoContainer.Name = "DroneCargoContainer"
+		self.cargoContainer.Parent = self.rootPart
+	else
+		self.cargoContainer:ClearAllChildren()
+	end
 
-	cargoModel.Parent = dronePart
+	-- Generar los 3 paquetes nuevos
+	for i = 1, self.maxPackages do
+		local pkg = createSinglePackage(self.rootPart, i, PACKAGE_OFFSETS[i])
+		pkg.model.Parent = self.cargoContainer
+		table.insert(self.packages, pkg)
+	end
 
-	self.cargoModel = cargoModel
-	self.cargoBox   = cargoBox
-	self.weld       = weld
-	self.isLoaded   = true
+	self.packagesCount = self.maxPackages
+	self.isLoaded      = true
+	self.cargoMass     = self.maxPackages * CARGO_MASS_PER_PKG
 
-	print("[DroneCargo] ¡Nuevo contenedor de mercancía acoplado al dron!")
+	-- Sonido de reabastecimiento en hangar
+	local reloadSound = Instance.new("Sound")
+	reloadSound.SoundId = "rbxassetid://9114223170"
+	reloadSound.Volume = 1.0
+	reloadSound.PlaybackSpeed = 1.2
+	reloadSound.Parent = self.rootPart
+	reloadSound:Play()
+	Debris:AddItem(reloadSound, 3)
+
+	print("[DroneCargo] ¡Bodega completamente reabastecida en Base! 3/3 paquetes disponibles.")
+	return true, self.packagesCount
+end
+
+function DroneCargo.GetPackageCount(self: CargoInstance): number
+	return self.packagesCount
+end
+
+function DroneCargo.GetMaxPackages(self: CargoInstance): number
+	return self.maxPackages
+end
+
+-- Compatibilidad hacia atrás con DeliverAndReload
+function DroneCargo.DeliverAndReload(self: CargoInstance, dropPosition: Vector3)
+	self:DeliverOnePackage(dropPosition)
 end
 
 function DroneCargo.Destroy(self: CargoInstance)
-	if self.cargoModel then
-		self.cargoModel:Destroy()
+	if self.cargoContainer then
+		self.cargoContainer:Destroy()
 	end
 end
 
 ----------------------------------------------------------------------
 -- EXTENSIONES: MASA REAL E INERCIA DINÁMICA
 ----------------------------------------------------------------------
-
--- Configura la masa del paquete actual y si es inestable (detona en impacto fuerte)
 function DroneCargo.SetCargo(self: CargoInstance, massKg: number, inertiaAlpha: number, unstable: boolean?)
 	self.cargoMass    = math.max(0, massKg)
 	self.inertiaAlpha = math.max(0.001, inertiaAlpha)
 	self.isUnstable   = unstable or false
 
-	-- Cambio visual: carga inestable tiene neón ámbar de advertencia
-	local band = self.cargoModel:FindFirstChild("NeonBand") :: BasePart?
-	if band then
-		if self.isUnstable then
-			band.Color = Color3.fromRGB(255, 160, 0)  -- ámbar de peligro
-		else
-			band.Color = Color3.fromRGB(0, 255, 230)  -- cian estándar
+	for _, pkg in ipairs(self.packages) do
+		if pkg.band then
+			pkg.band.Color = if self.isUnstable then Color3.fromRGB(255, 160, 0) else COLOR_CARGO_NEON
 		end
 	end
-
-	print(string.format("[DroneCargo] Carga configurada: %.1f kg, α=%.3f, inestable=%s",
-		massKg, inertiaAlpha, tostring(self.isUnstable)))
 end
 
--- Calcula la velocidad efectiva según la masa de la carga
--- VelocidadEfectiva = VelocidadBase / (1 + (MasaCarga * InerciaAlpha))
+-- Multiplicador dinámico: más cargado = más pesado; vacío = más veloz y ágil
 function DroneCargo.GetSpeedMultiplier(self: CargoInstance): number
-	if not self.isLoaded or self.cargoMass <= 0 then return 1.0 end
-	local factor = 1 + (self.cargoMass * self.inertiaAlpha)
-	return math.max(0.3, 1.0 / factor)  -- mínimo 30% de velocidad base
+	if self.packagesCount == 3 then
+		return 0.88  -- 3 paquetes: pesado y con inercia
+	elseif self.packagesCount == 2 then
+		return 0.94  -- 2 paquetes
+	elseif self.packagesCount == 1 then
+		return 0.98  -- 1 paquete
+	else
+		return 1.06  -- 0 paquetes: ágil y veloz de regreso a base
+	end
 end
 
--- Evalúa energía cinética en impacto y detona si supera umbral (carga inestable)
--- Llamado desde DroneController al detectar una colisión a alta velocidad
--- Ek = 0.5 * MasaTotal * |velocidad|²
 function DroneCargo.EvaluateImpact(self: CargoInstance, droneMassKg: number, impactSpeed: number): boolean
 	if not self.isLoaded or not self.isUnstable then return false end
-
 	local totalMass = droneMassKg + self.cargoMass
 	local ek = 0.5 * totalMass * (impactSpeed * impactSpeed)
 
 	if ek >= EK_DETONATION_THRESHOLD then
-		warn(string.format("[DroneCargo] ¡DETONACIÓN! Ek=%.0f J > umbral %.0f J (masa=%.1f kg, v=%.1f studs/s)",
-			ek, EK_DETONATION_THRESHOLD, totalMass, impactSpeed))
 		self:Detonate()
 		return true
 	end
 	return false
 end
 
--- Detonación de la carga: explosión en Workspace y destrucción del contenedor
 function DroneCargo.Detonate(self: CargoInstance)
-	local pos = self.cargoBox.Position
-
+	local pos = self.rootPart.Position
 	local explosion = Instance.new("Explosion")
-	explosion.Position       = pos
-	explosion.BlastRadius    = 18
-	explosion.BlastPressure  = 5e5
+	explosion.Position = pos
+	explosion.BlastRadius = 18
+	explosion.BlastPressure = 5e5
 	explosion.DestroyJointRadiusPercent = 0
-	explosion.ExplosionType  = Enum.ExplosionType.NoCraters
-	explosion.Parent         = workspace
-	game:GetService("Debris"):AddItem(explosion, 3)
+	explosion.ExplosionType = Enum.ExplosionType.NoCraters
+	explosion.Parent = workspace
+	Debris:AddItem(explosion, 3)
 
-	self.isLoaded = false
-	self.isUnstable = false
-	if self.cargoModel then
-		game:GetService("Debris"):AddItem(self.cargoModel, 0.5)
+	for _, pkg in ipairs(self.packages) do
+		if pkg.model then pkg.model:Destroy() end
 	end
+	table.clear(self.packages)
+	self.packagesCount = 0
+	self.isLoaded = false
 end
 
 return DroneCargo
-

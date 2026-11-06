@@ -1,7 +1,6 @@
 --!strict
 -- src/shared/DeliveryManager.luau
--- Gestor de Misiones, Detección de Aterrizaje y Despacho de Entregas con Validación
--- Soporta: Aterrizaje progresivo automático (0.55s) y entrega manual con tecla [G]
+-- Gestor de Misiones, Ciclo Logístico (3 Paquetes) y Reabastecimiento en Base Central
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace         = game:GetService("Workspace")
 
@@ -39,6 +38,9 @@ export type ManagerInstance = {
 	confirmedEvent: RemoteEvent?,
 	confirmedConn: RBXScriptConnection?,
 	onDeliveryCallback: ((reward: number, padName: string) -> ())?,
+	-- NUEVO: control de inventario de bodega de 3 paquetes
+	packagesRemaining: number,
+	maxPackages: number,
 }
 
 -- Tolerancias de aterrizaje generosas para jugabilidad fluida
@@ -128,7 +130,7 @@ function DeliveryManager.new(): ManagerInstance
 			model = nil,
 			position = Vector3.new(0, 6, 0),
 			basePadPosition = Vector3.new(0, 4, 0),
-			reward = 250,
+			reward = 100,
 		})
 		table.insert(targets, {
 			name = "Pad_TorreA",
@@ -171,6 +173,8 @@ function DeliveryManager.new(): ManagerInstance
 		confirmedEvent = confirmedEvent,
 		confirmedConn = nil,
 		onDeliveryCallback = nil,
+		packagesRemaining = 3,
+		maxPackages = 3,
 	}
 
 	-- Auto-refrescar cuando se repliquen helipuertos del servidor
@@ -181,55 +185,49 @@ function DeliveryManager.new(): ManagerInstance
 		end)
 	end
 
-	-- Escuchar confirmación validada del servidor
+	local function onConfirmed(padName: string, reward: number)
+		print(string.format("[DeliveryManager] ¡Servidor confirmó operación en %s! (+%d ₵)", padName, reward))
+		self.originPadName = padName
+
+		local isBase = (padName == "Pad_Base" or padName == "Base")
+		if isBase then
+			-- Reabastecimiento completo en Base
+			self.packagesRemaining = self.maxPackages
+			print("[DeliveryManager] ¡Bodega reabastecida al 100%! 3 paquetes disponibles.")
+		else
+			-- Entrega normal en una torre
+			self.packagesRemaining = math.max(0, self.packagesRemaining - 1)
+			print(string.format("[DeliveryManager] Paquete entregado. Quedan %d/%d.", self.packagesRemaining, self.maxPackages))
+		end
+
+		local displayName = getPadDisplayName(padName)
+		for _, tgt in ipairs(self.targets) do
+			if tgt.name == padName then
+				displayName = tgt.displayName
+				break
+			end
+		end
+
+		if self.onDeliveryCallback then
+			self.onDeliveryCallback(reward, displayName)
+		end
+
+		-- Asignar el siguiente destino según la carga restante
+		self:PickNextTarget(padName)
+	end
+
 	if confirmedEvent then
-		self.confirmedConn = confirmedEvent.OnClientEvent:Connect(function(padName: string, reward: number)
-			print(string.format("[DeliveryManager] ¡Servidor confirmó entrega en %s! (+%d ₵)", padName, reward))
-
-			-- Actualizar helipuerto de origen al recién completado
-			self.originPadName = padName
-
-			-- Buscar nombre visible
-			local displayName = getPadDisplayName(padName)
-			for _, tgt in ipairs(self.targets) do
-				if tgt.name == padName then
-					displayName = tgt.displayName
-					break
-				end
-			end
-
-			if self.onDeliveryCallback then
-				self.onDeliveryCallback(reward, displayName)
-			end
-
-			-- Asignar nuevo objetivo aleatorio distinto al helipuerto actual
-			self:PickNextTarget(padName)
-		end)
+		self.confirmedConn = confirmedEvent.OnClientEvent:Connect(onConfirmed)
 	else
 		task.spawn(function()
 			local ev = resolveRemote("DeliveryConfirmed")
 			if ev and not self.confirmedConn then
 				self.confirmedEvent = ev
-				self.confirmedConn = ev.OnClientEvent:Connect(function(padName: string, reward: number)
-					print(string.format("[DeliveryManager] ¡Servidor confirmó entrega en %s! (+%d ₵)", padName, reward))
-					self.originPadName = padName
-					local displayName = getPadDisplayName(padName)
-					for _, tgt in ipairs(self.targets) do
-						if tgt.name == padName then
-							displayName = tgt.displayName
-							break
-						end
-					end
-					if self.onDeliveryCallback then
-						self.onDeliveryCallback(reward, displayName)
-					end
-					self:PickNextTarget(padName)
-				end)
+				self.confirmedConn = ev.OnClientEvent:Connect(onConfirmed)
 			end
 		end)
 	end
 
-	-- Escuchar rechazo de entrega para resetear estado
 	pcall(function()
 		local rejectedEvent = resolveRemote("DeliveryRejected")
 		if rejectedEvent then
@@ -243,8 +241,7 @@ function DeliveryManager.new(): ManagerInstance
 
 	local initialTarget = self.targets[self.currentTargetIndex]
 	local initialName = if initialTarget then initialTarget.displayName else "Torre A"
-	print(string.format("[DeliveryManager] Inicializado con %d helipuertos. Objetivo inicial: %s",
-		#targets, initialName))
+	print(string.format("[DeliveryManager v5] Inicializado: 3/3 paquetes. Primer objetivo: %s", initialName))
 
 	return setmetatable(self, DeliveryManager) :: any
 end
@@ -259,13 +256,14 @@ function DeliveryManager.RefreshTargets(self: ManagerInstance)
 			local basePart = child:FindFirstChild("BasePad") :: BasePart?
 			if basePart then
 				local displayName = getPadDisplayName(child.Name)
+				local rwd = if child.Name == "Pad_Base" then 100 else 250
 				table.insert(newTargets, {
 					name = child.Name,
 					displayName = displayName,
 					model = child,
 					position = basePart.Position + Vector3.new(0, 3, 0),
 					basePadPosition = basePart.Position,
-					reward = 250,
+					reward = rwd,
 				})
 			end
 		end
@@ -280,16 +278,46 @@ function DeliveryManager.GetCurrentTarget(self: ManagerInstance): DeliveryTarget
 	if #self.targets <= 1 then
 		self:RefreshTargets()
 	end
+
+	-- Si nos quedamos sin paquetes, el único objetivo es la Base Central
+	if self.packagesRemaining == 0 then
+		for idx, tgt in ipairs(self.targets) do
+			if tgt.name == "Pad_Base" then
+				self.currentTargetIndex = idx
+				return {
+					name = tgt.name,
+					displayName = "Base Central (Reabastecer)",
+					model = tgt.model,
+					position = tgt.position,
+					basePadPosition = tgt.basePadPosition,
+					reward = 100, -- Bono por completar la ruta
+				}
+			end
+		end
+	end
+
 	return self.targets[self.currentTargetIndex] or self.targets[1]
 end
 
--- Selecciona el siguiente destino que no sea el recién entregado
+-- Selecciona el siguiente destino
 function DeliveryManager.PickNextTarget(self: ManagerInstance, lastDeliveredPadName: string)
 	if #self.targets <= 1 then return end
 
+	-- Si ya no quedan paquetes, dirigir obligatoriamente a la Base Central
+	if self.packagesRemaining <= 0 then
+		for idx, tgt in ipairs(self.targets) do
+			if tgt.name == "Pad_Base" then
+				self.currentTargetIndex = idx
+				print("[DeliveryManager] ¡BODEGA VACÍA! Asignando regreso a Base Central para reabastecimiento.")
+				return
+			end
+		end
+	end
+
+	-- Si aún quedan paquetes, buscar torres distintas a la Base y a la última torre visitada
 	local candidates: { number } = {}
 	for idx, tgt in ipairs(self.targets) do
-		if tgt.name ~= lastDeliveredPadName then
+		if tgt.name ~= "Pad_Base" and tgt.name ~= lastDeliveredPadName then
 			table.insert(candidates, idx)
 		end
 	end
@@ -297,7 +325,13 @@ function DeliveryManager.PickNextTarget(self: ManagerInstance, lastDeliveredPadN
 	if #candidates > 0 then
 		self.currentTargetIndex = candidates[math.random(1, #candidates)]
 	else
-		self.currentTargetIndex = (self.currentTargetIndex % #self.targets) + 1
+		-- Si no hay otra torre candidata, alternar a cualquier torre disponible
+		for idx, tgt in ipairs(self.targets) do
+			if tgt.name ~= "Pad_Base" then
+				self.currentTargetIndex = idx
+				break
+			end
+		end
 	end
 
 	self.touchdownTimer = 0
@@ -305,10 +339,11 @@ function DeliveryManager.PickNextTarget(self: ManagerInstance, lastDeliveredPadN
 	self.currentZonePadName = nil
 
 	local newTarget = self:GetCurrentTarget()
-	print(string.format("[DeliveryManager] Nuevo contrato asignado: %s (+%d ₵)", newTarget.displayName, newTarget.reward))
+	print(string.format("[DeliveryManager] Siguiente destino: %s (+%d ₵ | Carga: %d/%d)",
+		newTarget.displayName, newTarget.reward, self.packagesRemaining, self.maxPackages))
 end
 
--- Comprueba si el dron está dentro de una zona de aterrizaje válida
+-- Comprueba si el dron está dentro de una zona válida de entrega o reabastecimiento
 function DeliveryManager.CheckPadZone(
 	self: ManagerInstance,
 	dronePosition: Vector3,
@@ -322,13 +357,23 @@ function DeliveryManager.CheckPadZone(
 	local closestTarget: DeliveryTarget? = nil
 	local closestDist = math.huge
 
-	-- 1. Primero comprobar si está sobre su objetivo asignado
+	-- 1. Primero comprobar el objetivo actual
 	local currentTgt = self:GetCurrentTarget()
 	if currentTgt then
 		local hDist = Vector3.new(dronePosition.X - currentTgt.basePadPosition.X, 0, dronePosition.Z - currentTgt.basePadPosition.Z).Magnitude
 		local vDiff = dronePosition.Y - currentTgt.basePadPosition.Y
 		if hDist <= MAX_HORIZ_DIST and vDiff >= MIN_VERT_DIFF and vDiff <= MAX_VERT_DIFF then
-			return true, currentTgt, currentTgt.reward, nil
+			-- Si el objetivo es la Base para reabastecer:
+			if currentTgt.name == "Pad_Base" then
+				return true, currentTgt, currentTgt.reward, nil
+			else
+				-- Si es una torre y tenemos paquetes:
+				if self.packagesRemaining > 0 then
+					return true, currentTgt, currentTgt.reward, nil
+				else
+					return false, currentTgt, 0, "Bodega vacía. Vuela a Base Central a reabastecerte"
+				end
+			end
 		end
 	end
 
@@ -343,15 +388,28 @@ function DeliveryManager.CheckPadZone(
 		end
 
 		if horizDist <= MAX_HORIZ_DIST and vertDiff >= MIN_VERT_DIFF and vertDiff <= MAX_VERT_DIFF then
-			-- Si es el mismo helipuerto de origen de donde recién despegó:
-			if tgt.name == self.originPadName then
-				return false, tgt, 0, string.format("Ya estás en %s. Vuela hacia %s", tgt.displayName, currentTgt and currentTgt.displayName or "tu objetivo")
+			-- Caso Base: si está en Base y no tiene carga completa, siempre permitir reabastecer
+			if tgt.name == "Pad_Base" then
+				if self.packagesRemaining < self.maxPackages then
+					return true, tgt, 100, nil
+				else
+					return false, tgt, 0, "Ya tienes carga completa (3/3). Vuela a " .. (currentTgt and currentTgt.displayName or "tu objetivo")
+				end
 			end
+
+			-- Caso Torre
+			if self.packagesRemaining <= 0 then
+				return false, tgt, 0, "Bodega vacía. Regresa a Base Central para reabastecerte"
+			end
+
+			if tgt.name == self.originPadName then
+				return false, tgt, 0, string.format("Ya entregaste en %s. Vuela hacia %s", tgt.displayName, currentTgt and currentTgt.displayName or "tu objetivo")
+			end
+
 			return true, tgt, tgt.reward, nil
 		end
 	end
 
-	-- Fuera de zona: dar indicación clara al jugador
 	local hint = if closestTarget
 		then string.format("Helipuerto más cercano: %s a %.0f studs", closestTarget.displayName, closestDist)
 		else "No hay helipuertos detectados en rango"
@@ -359,7 +417,6 @@ function DeliveryManager.CheckPadZone(
 	return false, closestTarget, 0, hint
 end
 
--- Actualización por frame en el loop de vuelo
 function DeliveryManager.Update(
 	self: ManagerInstance,
 	dt: number,
@@ -387,31 +444,39 @@ function DeliveryManager.Update(
 	end
 end
 
--- Entrega manual inmediata al presionar tecla [G] sobre la zona
 function DeliveryManager.TryManualDeliver(self: ManagerInstance, dronePosition: Vector3, droneVelocity: Vector3): (boolean, string?)
 	local inZone, target, _, hint = self:CheckPadZone(dronePosition, droneVelocity)
 	if inZone and target then
-		print(string.format("[DeliveryManager] ¡Entrega manual [G] ejecutada en %s!", target.displayName))
+		local isBase = (target.name == "Pad_Base")
+		local actionMsg = if isBase then "¡Reabasteciendo bodega en Base Central!" else string.format("¡Entregando en %s!", target.displayName)
+		print(string.format("[DeliveryManager] Operación manual [G] en %s: %s", target.displayName, actionMsg))
 		self:CompleteDelivery(target.name)
-		return true, string.format("¡Entregando en %s!", target.displayName)
+		return true, actionMsg
 	else
-		local reason = hint or "Debes estar sobre un helipuerto para entregar"
+		local reason = hint or "Debes estar sobre un helipuerto para operar"
 		print("[DeliveryManager] [G] Rechazado:", reason)
 		return false, reason
 	end
 end
 
--- Envía la solicitud de reclamo al servidor
 function DeliveryManager.CompleteDelivery(self: ManagerInstance, padName: string)
 	if not self.claimEvent then
 		self.claimEvent = resolveRemote("DeliveryCompleted")
 	end
 	if self.claimEvent then
-		print(string.format("[DeliveryManager] Reclamando entrega en el servidor para '%s'...", padName))
+		print(string.format("[DeliveryManager] Enviando confirmación de operación en '%s' al servidor...", padName))
 		self.claimEvent:FireServer(padName)
 	else
-		warn("[DeliveryManager] No se pudo reclamar: claimEvent es nil")
+		warn("[DeliveryManager] No se pudo enviar evento: claimEvent es nil")
 	end
+end
+
+function DeliveryManager.GetPackagesRemaining(self: ManagerInstance): number
+	return self.packagesRemaining
+end
+
+function DeliveryManager.GetMaxPackages(self: ManagerInstance): number
+	return self.maxPackages
 end
 
 function DeliveryManager.SetOnDeliveryCallback(self: ManagerInstance, callback: (reward: number, padName: string) -> ())

@@ -288,16 +288,32 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		flightStateEvent = flightStateEvent,
 	}, DroneController)
 
-	-- Callback de entrega
-	if deliveryManager and deliveryManager.SetOnDeliveryCallback then
-		deliveryManager:SetOnDeliveryCallback(function(reward: number, padName: string)
-			if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName) end) end
-			if self.cargo then pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end) end
-		end)
-	end
+	-- Callback de entrega y logística
+	self:SetupDeliveryCallback()
 
-	print("[DroneController v4] Listo!")
+	print("[DroneController v5] Listo!")
 	return self
+end
+
+function DroneController:SetupDeliveryCallback()
+	if not self.deliveryManager or not (self.deliveryManager :: any).SetOnDeliveryCallback then return end
+	(self.deliveryManager :: any):SetOnDeliveryCallback(function(reward: number, padName: string)
+		local isBase = (padName == "Base" or padName == "Pad_Base" or string.find(padName, "Base") ~= nil)
+		local remaining = 0
+		if isBase then
+			if self.cargo and (self.cargo :: any).RestockAtBase then
+				_, remaining = (self.cargo :: any):RestockAtBase()
+			end
+			if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, "BASE CENTRAL", remaining, true) end) end
+		else
+			if self.cargo and (self.cargo :: any).DeliverOnePackage then
+				_, remaining = (self.cargo :: any):DeliverOnePackage(self.rootPart.Position)
+			elseif self.cargo then
+				pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end)
+			end
+			if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName, remaining, false) end) end
+		end
+	end)
 end
 
 ----------------------------------------------------------------------
@@ -379,12 +395,7 @@ function DroneController:StartFlying()
 				local okNew, inst = pcall(function() return mod.new() end)
 				if okNew and inst then
 					self.deliveryManager = inst
-					if (inst :: any).SetOnDeliveryCallback then
-						(inst :: any):SetOnDeliveryCallback(function(reward: number, padName: string)
-							if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName) end) end
-							if self.cargo then pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end) end
-						end)
-					end
+					self:SetupDeliveryCallback()
 					print("[DroneController] DeliveryManager activado al iniciar vuelo.")
 				end
 			end
@@ -553,6 +564,12 @@ function DroneController:StartFlying()
 			end)
 		end
 
+		local cargoCount = if self.cargo and (self.cargo :: any).GetPackageCount then (self.cargo :: any):GetPackageCount() else 3
+		local maxCargo = if self.cargo and (self.cargo :: any).GetMaxPackages then (self.cargo :: any):GetMaxPackages() else 3
+		if self.cargo and (self.cargo :: any).GetSpeedMultiplier then
+			self.cargoSpeedMult = (self.cargo :: any):GetSpeedMultiplier()
+		end
+
 		-- HUD
 		if self.hud then
 			pcall(function()
@@ -567,7 +584,9 @@ function DroneController:StartFlying()
 					currentTarget and currentTarget.position or nil,
 					currentTarget and currentTarget.displayName or nil,
 					currentTarget and currentTarget.reward or 250,
-					landingProgress
+					landingProgress,
+					cargoCount,
+					maxCargo
 				)
 			end)
 		end
@@ -727,13 +746,6 @@ function DroneController:BindInputs()
 				end
 			end
 		elseif k == Enum.KeyCode.G          then
-			if self.cargo and not self.cargo.isLoaded then
-				if self.hud and (self.hud :: any).ShowHint then
-					pcall(function() (self.hud :: any):ShowHint("RECARGANDO PAQUETE... ESPERA UN SEGUNDO", true) end)
-				end
-				return
-			end
-
 			-- Auto-recuperación: si deliveryManager era nil por latencia de carga inicial, reintentar ahora
 			if not self.deliveryManager then
 				print("[DroneController] deliveryManager era nil, intentando inicializar bajo demanda...")
@@ -744,12 +756,7 @@ function DroneController:BindInputs()
 						local okNew, inst = pcall(function() return modResult.new() end)
 						if okNew and inst then
 							self.deliveryManager = inst
-							if (inst :: any).SetOnDeliveryCallback then
-								(inst :: any):SetOnDeliveryCallback(function(reward: number, padName: string)
-									if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName) end) end
-									if self.cargo then pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end) end
-								end)
-							end
+							self:SetupDeliveryCallback()
 							print("[DroneController] ¡deliveryManager inicializado bajo demanda con éxito!")
 						else
 							warn("[DroneController] Falló modResult.new() bajo demanda:", inst)

@@ -358,5 +358,34 @@ Al modificar el nombre de la recompensa/moneda en `src/server/Main.server.luau` 
    * El horizonte artificial holográfico del HUD se sincroniza automáticamente con la inclinación real.
 
 ---
+
+## 14. Sistema Logístico de Bodega (3 Paquetes), Ciclo de Reabastecimiento en Base Central y Tolvas Receptoras en Torres
+
+### 🔍 1. Diagnóstico y Necesidad de Diseño
+* **Falta de Sentido Logístico:** El sistema original recargaba un paquete mágicamente en el aire 1.5 segundos después de cada entrega, sin límite de paquetes y sin requerir volver a la base.
+* **Falta de Recepción en Torres:** Al soltar la caja en una torre, esta simplemente caía sobre el helipuerto y desaparecía tras un temporizador, sin que la torre interactuara con el paquete ni verificara físicamente la recepción.
+
+### 🛠️ 2. Solución de Ingeniería Implementada
+1. **Bahía de Carga con 3 Paquetes Físicos Individuales (`DroneCargo.luau`):**
+   * El dron equipa 3 paquetes modulares visibles bajo el chasis (`Package 1`, `Package 2`, `Package 3`), cada uno con su propio contenedor metálico, aro de neón, soldadura (`WeldConstraint`) y haz tractor individual (`Beam`).
+   * Al entregar en una torre, se desacopla **únicamente 1 paquete**, el cual cae por gravedad real en la plataforma con rótulo holográfico `[ENTREGADO // VERIFICADO]`.
+   * Los paquetes restantes permanecen firmemente soldados bajo el dron.
+   * La masa y la inercia varían dinámicamente: con 3 paquetes el dron vuela más pesado (`0.88x`), y con 0 paquetes vuela más ágil (`1.06x`).
+2. **Ciclo de Reabastecimiento en Base Central (`DeliveryManager.luau`):**
+   * El jugador realiza hasta 3 entregas en las torres.
+   * Al entregar el último paquete (`0/3` paquetes restantes), el sistema bloquea nuevas entregas y enruta automáticamente el destino hacia la **Base Central (`Pad_Base`)**.
+   * Al posarse sobre la Base Central y presionar `[G]` (o tras 0.6s de aterrizaje), se ejecuta `RestockAtBase()`, recargando los 3 paquetes bajo el chasis, otorgando un bono de ruta de **+100 PELAOCOINS**, y asignando una nueva ruta de reparto hacia las torres.
+3. **Tolvas Receptoras y Pulso de Escaneo en Torres (`Main.server.luau`):**
+   * En cada helipuerto de las torres se instaló una **Tolva de Descarga Receptora (`CargoDropBay`)** de neón con letrero `▼ TOLVA DE DESCARGA ▼`.
+   * Al confirmarse una entrega, el servidor genera un pulso de escaneo holográfico expansivo (`ScanReceiptPulse`) que barre la superficie del helipuerto confirmando la ingesta de la carga.
+4. **Indicador Visual de Bodega en Tiempo Real en HUD (`DroneHUD.luau`):**
+   * La tarjeta de misión incorpora el estado de la bodega:
+     * 3 paquetes: `BODEGA: [📦 📦 📦] (3/3)` en Neón Cian.
+     * 2 paquetes: `BODEGA: [📦 📦 ⬝] (2/3)` en Neón Cian.
+     * 1 paquete:  `BODEGA: [📦 ⬝ ⬝] (1/3) ¡ÚLTIMO!` en Neón Amarillo.
+     * 0 paquetes: `BODEGA: [⬝ ⬝ ⬝] (0/3) ¡VE A BASE!` en Neón Rojo parpadeante.
+   * Los popups de victoria muestran la carga restante en tiempo real y notifican el reabastecimiento en Base.
+
+---
 *Fin del documento de auditoría técnica.*
 

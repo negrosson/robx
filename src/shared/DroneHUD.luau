@@ -24,6 +24,7 @@ export type HUDInstance = {
 	missionBox: Frame,
 	missionTargetLabel: TextLabel,
 	missionRewardLabel: TextLabel,
+	cargoStatusLabel: TextLabel,
 	landingBar: Frame,
 	landingFill: Frame,
 	successPopup: Frame,
@@ -319,7 +320,7 @@ function DroneHUD.new(): HUDInstance
 	----------------------------------------------------------------------
 	local missionBox = Instance.new("Frame")
 	missionBox.Name = "MissionBox"
-	missionBox.Size = UDim2.fromOffset(240, 95)
+	missionBox.Size = UDim2.fromOffset(240, 118)
 	missionBox.AnchorPoint = Vector2.new(1, 0)
 	missionBox.Position = UDim2.new(1, -25, 0, 160)
 	missionBox.BackgroundColor3 = COLOR_BG
@@ -372,11 +373,24 @@ function DroneHUD.new(): HUDInstance
 	missionRewardLabel.TextXAlignment = Enum.TextXAlignment.Left
 	missionRewardLabel.Parent = missionBox
 
+	-- Estado de bodega de paquetes (3/3)
+	local cargoStatusLabel = Instance.new("TextLabel")
+	cargoStatusLabel.Name = "CargoStatusLabel"
+	cargoStatusLabel.Size = UDim2.new(1, -20, 0, 18)
+	cargoStatusLabel.Position = UDim2.fromOffset(10, 68)
+	cargoStatusLabel.BackgroundTransparency = 1
+	cargoStatusLabel.Font = Enum.Font.RobotoMono
+	cargoStatusLabel.Text = "BODEGA: [📦 📦 📦] (3/3)"
+	cargoStatusLabel.TextColor3 = COLOR_NEON_CYAN
+	cargoStatusLabel.TextSize = 12
+	cargoStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	cargoStatusLabel.Parent = missionBox
+
 	-- Barra de confirmación de aterrizaje en pad
 	local landingBar = Instance.new("Frame")
 	landingBar.Name = "LandingBar"
 	landingBar.Size = UDim2.new(1, -20, 0, 6)
-	landingBar.Position = UDim2.fromOffset(10, 75)
+	landingBar.Position = UDim2.fromOffset(10, 96)
 	landingBar.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
 	landingBar.BorderSizePixel = 0
 	landingBar.Visible = false
@@ -472,6 +486,7 @@ function DroneHUD.new(): HUDInstance
 		missionBox = missionBox,
 		missionTargetLabel = missionTargetLabel,
 		missionRewardLabel = missionRewardLabel,
+		cargoStatusLabel = cargoStatusLabel,
 		landingBar = landingBar,
 		landingFill = landingFill,
 		successPopup = successPopup,
@@ -493,7 +508,9 @@ function DroneHUD.Update(
 	targetPosition: Vector3?,
 	targetDisplayName: string?,
 	targetReward: number?,
-	landingProgress: number
+	landingProgress: number,
+	cargoRemaining: number?,
+	cargoMax: number?
 )
 	-- 1. Velocímetro e impulso
 	local roundedSpeed = math.round(speed)
@@ -535,10 +552,25 @@ function DroneHUD.Update(
 		self.camLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
 	end
 
-	-- 6. Tarjeta de misión
+	-- 6. Tarjeta de misión y estado de bodega
 	if targetDisplayName then
 		self.missionTargetLabel.Text = "DESTINO: " .. targetDisplayName
 		self.missionRewardLabel.Text = string.format("RECOMPENSA: +%d %s", targetReward or 250, getCurrencyName())
+	end
+
+	local remaining = cargoRemaining or 3
+	if remaining == 3 then
+		self.cargoStatusLabel.Text = "BODEGA: [📦 📦 📦] (3/3)"
+		self.cargoStatusLabel.TextColor3 = COLOR_NEON_CYAN
+	elseif remaining == 2 then
+		self.cargoStatusLabel.Text = "BODEGA: [📦 📦 ⬝] (2/3)"
+		self.cargoStatusLabel.TextColor3 = COLOR_NEON_CYAN
+	elseif remaining == 1 then
+		self.cargoStatusLabel.Text = "BODEGA: [📦 ⬝ ⬝] (1/3) ¡ÚLTIMO!"
+		self.cargoStatusLabel.TextColor3 = COLOR_NEON_YELLOW
+	else
+		self.cargoStatusLabel.Text = "BODEGA: [⬝ ⬝ ⬝] (0/3) ¡VE A BASE!"
+		self.cargoStatusLabel.TextColor3 = COLOR_WARN
 	end
 
 	if landingProgress > 0 then
@@ -578,9 +610,17 @@ function DroneHUD.Update(
 	end
 end
 
-function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName: string)
-	self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s", targetName:upper(), reward, getCurrencyName())
-	self.successText.TextColor3 = COLOR_NEON_YELLOW
+function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName: string, remainingCargo: number?, isRestock: boolean?)
+	if isRestock then
+		self.successText.Text = string.format("¡BODEGA REABASTECIDA EN %s!\n+%d %s (3/3 Paquetes Listos)", targetName:upper(), reward, getCurrencyName())
+		self.successText.TextColor3 = COLOR_NEON_CYAN
+	elseif remainingCargo == 0 then
+		self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s\n¡BODEGA VACÍA! REGRESA A BASE", targetName:upper(), reward, getCurrencyName())
+		self.successText.TextColor3 = COLOR_NEON_YELLOW
+	else
+		self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s (Quedan %d en bodega)", targetName:upper(), reward, getCurrencyName(), remainingCargo or 1)
+		self.successText.TextColor3 = COLOR_NEON_YELLOW
+	end
 	self.successPopup.Visible = true
 	self.successPopup.Size = UDim2.fromOffset(360, 60)
 

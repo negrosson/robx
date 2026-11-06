@@ -3,6 +3,7 @@
 -- Servidor Principal v4.1: Red de Helipuertos, Control Físico, Red Centralizada y Seguridad Anti-Exploits
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
 local Workspace         = game:GetService("Workspace")
 
 local NetworkEvents = require(ReplicatedStorage:WaitForChild("NetworkEvents", 5) :: ModuleScript)
@@ -155,6 +156,36 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 		skyBeam.CanCollide = false
 		skyBeam.Anchored = true
 		skyBeam.Parent = model
+
+		-- Tolva / Receptáculo de Entrega en el Helipuerto
+		local dropBay = Instance.new("Part")
+		dropBay.Name = "CargoDropBay"
+		dropBay.Size = Vector3.new(8, 0.3, 8)
+		dropBay.Position = position + Vector3.new(-halfW + 6, 1.65, -halfW + 6)
+		dropBay.Material = Enum.Material.Neon
+		dropBay.Color = Color3.fromRGB(0, 255, 180)
+		dropBay.Transparency = 0.35
+		dropBay.CanCollide = false
+		dropBay.Anchored = true
+		dropBay.Parent = model
+
+		local baySign = Instance.new("BillboardGui")
+		baySign.Name = "DropBaySign"
+		baySign.Size = UDim2.fromOffset(180, 26)
+		baySign.StudsOffset = Vector3.new(0, 1.8, 0)
+		baySign.AlwaysOnTop = true
+		baySign.MaxDistance = 120
+		baySign.Parent = dropBay
+
+		local bayText = Instance.new("TextLabel")
+		bayText.Size = UDim2.fromScale(1, 1)
+		bayText.BackgroundTransparency = 1
+		bayText.Font = Enum.Font.Code
+		bayText.Text = "▼ TOLVA DE DESCARGA ▼"
+		bayText.TextColor3 = Color3.fromRGB(0, 255, 180)
+		bayText.TextSize = 11
+		bayText.TextStrokeTransparency = 0.3
+		bayText.Parent = baySign
 	end
 
 	-- 5. LETRERO HOLOGRÁFICO 3D (visible hasta 1000 studs)
@@ -419,10 +450,35 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 	local deliveries = leaderstats:FindFirstChild("Entregas") :: IntValue?
 
 	if credits and deliveries then
-		local reward = 250
+		local isBase = (padName == "Pad_Base" or padName == "Base")
+		local reward = if isBase then 100 else 250
 		credits.Value += reward
-		deliveries.Value += 1
-		print(string.format("[Servidor SEGURO] Entrega validada en %s para %s (+%d %s)", padName, player.Name, reward, credits.Name))
+		if not isBase then
+			deliveries.Value += 1
+		end
+		print(string.format("[Servidor SEGURO] Operación validada en %s para %s (+%d %s)", padName, player.Name, reward, credits.Name))
+
+		-- Pulso de escaneo y verificación holográfica en la torre receptora
+		if not isBase and basePad then
+			local scanRing = Instance.new("Part")
+			scanRing.Name = "ScanReceiptPulse"
+			scanRing.Size = Vector3.new(24, 0.4, 24)
+			scanRing.Position = basePad.Position + Vector3.new(0, 1.8, 0)
+			scanRing.Material = Enum.Material.Neon
+			scanRing.Color = Color3.fromRGB(0, 255, 180)
+			scanRing.Transparency = 0.25
+			scanRing.CanCollide = false
+			scanRing.Anchored = true
+			scanRing.Parent = Workspace
+
+			local tw = TweenService:Create(
+				scanRing,
+				TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Size = Vector3.new(34, 0.2, 34), Transparency = 1 }
+			)
+			tw:Play()
+			game:GetService("Debris"):AddItem(scanRing, 1.3)
+		end
 
 		-- Confirmar al cliente para activar animaciones/HUD legítimas
 		deliveryConfirmedEvent:FireClient(player, padName, reward)
