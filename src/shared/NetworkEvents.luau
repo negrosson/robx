@@ -17,6 +17,7 @@ NetworkEvents.Names = {
 	OnDamageTaken      = "OnDamageTaken",
 	OnEMPActivated     = "OnEMPActivated",
 	OnHeatUpdate       = "OnHeatUpdate",
+	OnBountyAwarded    = "OnBountyAwarded",
 }
 
 local FOLDER_NAME = "CyberNetworkEvents"

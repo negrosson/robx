@@ -316,4 +316,19 @@ task.spawn(function()
 			dbg("OnHeatUpdate conectado")
 		end
 	end)
+
+	task.spawn(function()
+		local onBounty = ReplicatedStorage:WaitForChild("OnBountyAwarded", 10)
+		if onBounty and onBounty:IsA("RemoteEvent") then
+			(onBounty :: RemoteEvent).OnClientEvent:Connect(function(data: any)
+				if myDrone and myDrone.hud then
+					local bounty = if typeof(data) == "table" then data.bounty else (data or 35)
+					pcall(function()
+						myDrone.hud:ShowHint(string.format("¡HOSTIL NEUTRALIZADO! +%d PELAOCOINS 💰", bounty), false)
+					end)
+				end
+			end)
+			dbg("OnBountyAwarded conectado")
+		end
+	end)
 end)

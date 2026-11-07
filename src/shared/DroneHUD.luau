@@ -314,9 +314,9 @@ function DroneHUD.new(): HUDInstance
 	camLabel.Size = UDim2.new(1, 0, 1, 0)
 	camLabel.BackgroundTransparency = 1
 	camLabel.Font = Enum.Font.RobotoMono
-	camLabel.Text = "CAM: 3RA PERSONA // [V] FPV // [X] FRENO"
+	camLabel.Text = "CAM: 3RA PERSONA // [LMB] PLASMA // [C] EMP // [V] FPV // [X] FRENO"
 	camLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
-	camLabel.TextSize = 11
+	camLabel.TextSize = 10
 	camLabel.Parent = topBanner
 
 	----------------------------------------------------------------------
@@ -609,12 +609,12 @@ function DroneHUD.Update(
 	self.brakeIndicator.Visible = isBraking
 	self.horizonLine.Rotation = -math.deg(rollAngle)
 
-	-- 5. Modo de cámara
+	-- 5. Modo de cámara y controles de arsenal
 	if isFPV then
-		self.camLabel.Text = "CAM: FPV COCKPIT // [V] 3RA PERSONA // [X] FRENO"
+		self.camLabel.Text = "CAM: FPV COCKPIT // [LMB] PLASMA // [C] EMP // [V] 3RA PERSONA // [X] FRENO"
 		self.camLabel.TextColor3 = COLOR_NEON_CYAN
 	else
-		self.camLabel.Text = "CAM: 3RA PERSONA // [V] FPV COCKPIT // [X] FRENO"
+		self.camLabel.Text = "CAM: 3RA PERSONA // [LMB] PLASMA // [C] EMP // [V] FPV // [X] FRENO"
 		self.camLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
 	end
 

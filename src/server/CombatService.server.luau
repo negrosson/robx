@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 local Workspace         = game:GetService("Workspace")
+local TweenService      = game:GetService("TweenService")
 
 -- Módulos compartidos (src/shared/ → ReplicatedStorage)
 local DroneWeapons = require(ReplicatedStorage:WaitForChild("DroneWeapons", 8) :: ModuleScript)
@@ -39,6 +40,8 @@ type DroneState = {
 	liftReduction  : number,
 	liftEndTime    : number,
 	owner          : Player?,
+	bounty         : number?,
+	lastAttacker   : Player?,
 }
 
 local activeDrones: { [BasePart]: DroneState } = {}
@@ -78,6 +81,7 @@ ensureRemote("OnFireWeapon")
 ensureRemote("OnDamageTaken")
 ensureRemote("OnEMPActivated")
 ensureRemote("OnHeatUpdate")
+local onBountyEvent = ensureRemote("OnBountyAwarded")
 
 ----------------------------------------------------------------------
 -- API PÚBLICA — Registrar un dron en el sistema de combate
@@ -89,7 +93,8 @@ function CombatService_Register(
 	heatCooling   : number,
 	armorReduction: number,
 	empResistance : number,
-	owner         : Player?
+	owner         : Player?,
+	bounty        : number?
 )
 	activeDrones[part] = {
 		part           = part,
@@ -107,8 +112,10 @@ function CombatService_Register(
 		liftReduction  = 0,
 		liftEndTime    = 0,
 		owner          = owner,
+		bounty         = bounty,
+		lastAttacker   = nil,
 	}
-	print(string.format("[CombatService] Dron registrado: %s (HP:%d / Heat:%d)", part.Name, maxHealth, maxHeat))
+	print(string.format("[CombatService] Dron registrado: %s (HP:%d / Heat:%d / Bounty:%s)", part.Name, maxHealth, maxHeat, tostring(bounty or 0)))
 end
 
 function CombatService_Unregister(part: BasePart)
@@ -138,7 +145,7 @@ local function hasLineOfSight(origin: Vector3, target: Vector3, exclude: { Insta
 end
 
 -- Genera explosión física al destruir un dron
-local function destroyDrone(state: DroneState)
+local function destroyDrone(state: DroneState, killerPlayer: Player?)
 	local part = state.part
 	if not part or not part.Parent then return end
 
@@ -175,7 +182,41 @@ local function destroyDrone(state: DroneState)
 			flightEv:FireClient(state.owner, "StopFlying")
 		end
 	else
-		-- Dron enemigo: retirar del registro y destruir la parte física tras breve pausa
+		-- Dron enemigo: otorgar recompensa en PELAOCOINS al killerPlayer / atacante
+		local killer = killerPlayer or state.lastAttacker
+		if killer and killer:IsA("Player") then
+			local bounty = state.bounty or (part:GetAttribute("Bounty") :: number?)
+			if not bounty or bounty <= 0 then
+				if string.find(part.Name, "scav_gnats") then
+					bounty = 35
+				elseif string.find(part.Name, "aegis_44") then
+					bounty = 80
+				elseif string.find(part.Name, "kuroshio_v") then
+					bounty = 120
+				else
+					bounty = 35
+				end
+			end
+
+			local leaderstats = killer:FindFirstChild("leaderstats")
+			if leaderstats then
+				local coins = leaderstats:FindFirstChild("PELAOCOINS") :: IntValue?
+				if coins then
+					coins.Value += bounty
+					print(string.format("[CombatService] Recompensa de %d PELAOCOINS acreditada a %s", bounty, killer.Name))
+				end
+			end
+
+			-- Notificar al HUD del jugador
+			pcall(function()
+				onBountyEvent:FireClient(killer, {
+					bounty = bounty,
+					targetName = part.Name,
+				})
+			end)
+		end
+
+		-- Retirar del registro y destruir la parte física tras breve pausa
 		print(string.format("[CombatService] Dron enemigo neutralizado: %s", part.Name))
 		activeDrones[part] = nil
 		task.delay(0.4, function()
@@ -220,7 +261,11 @@ local function triggerEMP(state: DroneState)
 end
 
 -- Aplica daño a un DroneState con mitigación de blindaje
-local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any)
+local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any, attackerPlayer: Player?)
+	if attackerPlayer then
+		state.lastAttacker = attackerPlayer
+	end
+
 	local mitigation = math.clamp(state.armorReduction, 0, 0.90)
 	local finalDmg = math.max(1, rawDamage * (1 - mitigation))
 	state.health = math.max(0, state.health - finalDmg)
@@ -237,7 +282,7 @@ local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any
 
 	-- Destruir dron al llegar a 0 HP
 	if state.health <= 0 then
-		destroyDrone(state)
+		destroyDrone(state, attackerPlayer)
 	end
 end
 
@@ -317,12 +362,83 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		end
 	end
 
-	-- 4. Procesar impacto en el objetivo (si es un dron registrado)
-	if targetPart and typeof(targetPart) == "Instance" then
-		local targetState = activeDrones[targetPart :: BasePart]
+	-- 4. Adquisición de objetivo y raycast fallback en servidor
+	if not targetPart or not targetPart:IsA("BasePart") then
+		local rayDir = (targetPos - originPos).Unit * math.min(distance + 5, weaponSpec.range)
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = excludeList
+
+		local rayHit = Workspace:Raycast(originPos, rayDir, rayParams)
+		if rayHit and rayHit.Instance then
+			local hitPart = rayHit.Instance
+			if activeDrones[hitPart] then
+				targetPart = hitPart
+				targetPos = rayHit.Position
+			else
+				local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+				if enemyFolder and hitPart:IsDescendantOf(enemyFolder) then
+					local potential = if hitPart.Parent == enemyFolder then hitPart else hitPart.Parent
+					if potential and potential:IsA("BasePart") and activeDrones[potential] then
+						targetPart = potential
+					elseif hitPart:IsA("BasePart") and activeDrones[hitPart] then
+						targetPart = hitPart
+					end
+					targetPos = rayHit.Position
+				end
+			end
+		end
+	end
+
+	-- 5. Proyectil visible en servidor (Plasma Bolt para magma_spike y armas de proyectil)
+	if weaponSpec.projectileSpeed > 0 and weaponSpec.damageType ~= "missile" then
+		local bolt = Instance.new("Part")
+		bolt.Name = "ServerPlasmaBolt"
+		bolt.Size = Vector3.new(0.6, 0.6, 2.2)
+		bolt.Material = Enum.Material.Neon
+		bolt.Color = weaponSpec.projectileColor or Color3.fromRGB(255, 100, 0)
+		bolt.CanCollide = false
+		bolt.CastShadow = false
+		bolt.Massless = true
+		bolt.CFrame = CFrame.lookAt(originPos, targetPos)
+		bolt.Parent = Workspace
+		Debris:AddItem(bolt, 3)
+
+		local flightDuration = math.clamp(distance / weaponSpec.projectileSpeed, 0.05, 2.5)
+		local tween = TweenService:Create(
+			bolt,
+			TweenInfo.new(flightDuration, Enum.EasingStyle.Linear),
+			{ CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - originPos).Unit) }
+		)
+		tween:Play()
+		tween.Completed:Connect(function()
+			if bolt.Parent then
+				-- Pequeño destello de impacto en posición objetivo
+				local flash = Instance.new("Part")
+				flash.Shape = Enum.PartType.Ball
+				flash.Size = Vector3.new(1.6, 1.6, 1.6)
+				flash.Material = Enum.Material.Neon
+				flash.Color = bolt.Color
+				flash.Position = targetPos
+				flash.CanCollide = false
+				flash.Anchored = true
+				flash.Parent = Workspace
+				Debris:AddItem(flash, 0.12)
+				bolt:Destroy()
+			end
+		end)
+	end
+
+	-- 6. Procesar impacto en el objetivo
+	if targetPart and typeof(targetPart) == "Instance" and targetPart:IsA("BasePart") then
+		local targetState = activeDrones[targetPart]
+		if not targetState and targetPart.Parent and targetPart.Parent:IsA("BasePart") then
+			targetState = activeDrones[targetPart.Parent]
+		end
+
 		if targetState then
-			-- Calcular daño con blindaje
-			applyDamage(targetState, weaponSpec.damage, weaponSpec)
+			-- Calcular daño con blindaje y asociar atacante para recompensas
+			applyDamage(targetState, weaponSpec.damage, weaponSpec, player)
 
 			-- Calor en el objetivo
 			applyHeat(targetState, weaponSpec.heatOnTarget)
@@ -342,9 +458,7 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 					-- Aplicar impulso físico para desestabilizar AlignOrientation
 					local ao = targetPart:FindFirstChild("FlightOrientation") :: AlignOrientation?
 					if ao then
-						-- Deshabilitar brevemente para simular desestabilización
 						ao.Enabled = false
-						-- Aplicar impulso en la dirección de impacto
 						local impactDir = (targetPart.Position - originPos).Unit
 						targetPart.AssemblyLinearVelocity += impactDir * effect.value
 						task.delay(IMPULSE_DECAY, function()
@@ -362,7 +476,7 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		end
 	end
 
-	-- 5. Misil: generar proyectil físico en el servidor
+	-- 7. Misil: generar proyectil físico en el servidor
 	if weaponSpec.damageType == "missile" and weaponSpec.projectileSpeed > 0 then
 		local missileVFX = Instance.new("Part")
 		missileVFX.Name        = "CyberMissile"
@@ -405,6 +519,102 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 			end
 		end)
 	end
+end)
+
+----------------------------------------------------------------------
+-- CONTRAMEDIDA EMP [C] (Cliente → Servidor)
+----------------------------------------------------------------------
+local playerLastEMP: { [Player]: number } = {}
+local EMP_COUNTERMEASURE_COOLDOWN = 10.0
+local EMP_COUNTERMEASURE_RADIUS = 60.0
+local EMP_STUN_DURATION = 3.0
+
+onEMPEvent.OnServerEvent:Connect(function(player: Player)
+	local now = os.clock()
+	local lastTime = playerLastEMP[player] or 0
+	if now - lastTime < EMP_COUNTERMEASURE_COOLDOWN then
+		return
+	end
+	playerLastEMP[player] = now
+
+	-- Localizar el dron del jugador
+	local shooterDrone: BasePart? = nil
+	for part, state in pairs(activeDrones) do
+		if state.owner == player then
+			shooterDrone = part
+			break
+		end
+	end
+
+	if not shooterDrone or not shooterDrone.Parent then return end
+	local centerPos = shooterDrone.Position
+
+	print(string.format("[CombatService] %s activó contramedida de pulso EMP en %s", player.Name, tostring(centerPos)))
+
+	-- 1. Efecto visual de onda esférica cyan en el servidor (replicado)
+	local shockwave = Instance.new("Part")
+	shockwave.Name = "EMPShockwave"
+	shockwave.Shape = Enum.PartType.Ball
+	shockwave.Size = Vector3.new(2, 2, 2)
+	shockwave.Position = centerPos
+	shockwave.Material = Enum.Material.Neon
+	shockwave.Color = Color3.fromRGB(0, 255, 230) -- Neon Cyan
+	shockwave.Transparency = 0.35
+	shockwave.CanCollide = false
+	shockwave.Anchored = true
+	shockwave.CastShadow = false
+	shockwave.Parent = Workspace
+	Debris:AddItem(shockwave, 1.0)
+
+	local waveLight = Instance.new("PointLight")
+	waveLight.Color = Color3.fromRGB(0, 255, 230)
+	waveLight.Brightness = 8
+	waveLight.Range = EMP_COUNTERMEASURE_RADIUS
+	waveLight.Parent = shockwave
+
+	local expandTween = TweenService:Create(
+		shockwave,
+		TweenInfo.new(0.65, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
+		{
+			Size = Vector3.new(EMP_COUNTERMEASURE_RADIUS * 2, EMP_COUNTERMEASURE_RADIUS * 2, EMP_COUNTERMEASURE_RADIUS * 2),
+			Transparency = 1.0,
+		}
+	)
+	expandTween:Play()
+
+	-- 2. Localizar y deshabilitar enemigos en el radio
+	local affectedCount = 0
+	for part, state in pairs(activeDrones) do
+		if state.owner == nil and part and part.Parent then
+			local dist = (part.Position - centerPos).Magnitude
+			if dist <= EMP_COUNTERMEASURE_RADIUS then
+				affectedCount += 1
+				local lv = part:FindFirstChild("FlightVelocity") :: LinearVelocity?
+				local ao = part:FindFirstChild("FlightOrientation") :: AlignOrientation?
+				if lv then lv.Enabled = false end
+				if ao then ao.Enabled = false end
+
+				local hl = Instance.new("Highlight")
+				hl.Name = "EMPHighlight"
+				hl.FillColor = Color3.fromRGB(0, 255, 230)
+				hl.FillTransparency = 0.4
+				hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+				hl.OutlineTransparency = 0.1
+				hl.Adornee = part
+				hl.Parent = part
+				Debris:AddItem(hl, EMP_STUN_DURATION)
+
+				task.delay(EMP_STUN_DURATION, function()
+					if part and part.Parent and activeDrones[part] then
+						if lv and lv.Parent then lv.Enabled = true end
+						if ao and ao.Parent then ao.Enabled = true end
+					end
+				end)
+			end
+		end
+	end
+
+	print(string.format("[CombatService] Pulso EMP completado: %d enemigos paralizados durante %.1fs", affectedCount, EMP_STUN_DURATION))
 end)
 
 ----------------------------------------------------------------------
@@ -460,9 +670,9 @@ end)
 _G.CombatService = {
 	Register   = CombatService_Register,
 	Unregister = CombatService_Unregister,
-	ApplyDamage = function(part: BasePart, damage: number)
+	ApplyDamage = function(part: BasePart, damage: number, attackerPlayer: Player?)
 		local state = activeDrones[part]
-		if state then applyDamage(state, damage, nil) end
+		if state then applyDamage(state, damage, nil, attackerPlayer) end
 	end,
 	ApplyHeat = function(part: BasePart, heat: number)
 		local state = activeDrones[part]

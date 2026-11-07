@@ -442,6 +442,30 @@ Al modificar el nombre de la recompensa/moneda en `src/server/Main.server.luau` 
    * Se modificó `destroyDrone`: si un dron destruido pertenece a un jugador (`owner ~= nil`), el servidor **no destruye la parte física**, sino que genera una detonación cinemática y reubica de forma segura el dron en la Base Central, restaurando la integridad y el vuelo sin romper instancias en Workspace.
 
 ---
+
+## 17. Fase 3: Arsenal Táctico del Jugador, Cañón de Plasma, Contramedida EMP y Recompensas (Bounties)
+
+### Contexto y Requerimientos
+La Fase 3 del Plan Maestro dota al dron de reparto de capacidades activas ofensivas y defensivas frente a la amenaza de los drones hostiles (Scav-Gnats, Aegis-44, Kuroshio-V):
+1. **Cañón de Plasma Magma-Spike [MouseButton1 / LMB]:** Proyectil térmico acelerado magnéticamente que inflige daño cinético/térmico, DoT y genera calor en el chasis del jugador.
+2. **Contramedida de Pulso EMP [Tecla C]:** Onda electromagnética omnidireccional en un radio de 60 studs con 10s de enfriamiento, que paraliza a los drones hostiles durante 3 segundos.
+3. **Gestión Térmica Activa y Prevención de Overheat:** Generación de calor por disparo, enfriamiento continuo y bloqueo de cañón si supera el 85% de temperatura.
+4. **Sistema de Recompensas de Caza (Bounties):** Acreditación server-authoritative de `PELAOCOINS` en `leaderstats` al destruir enemigos (+35 Scav-Gnat, +80 Aegis, +120 Kuroshio) con feedback diegético en el HUD.
+
+### Implementación y Arquitectura
+1. **Servidor (`CombatService.server.luau`):**
+   * **Validación de Disparo y Raycast Fallback:** `OnFireWeapon` valida distancia (anti-exploit de rango) y ejecuta un raycast server-side con compensación de puntería para asegurar que el proyectil impacte enemigos en `Workspace.EnemyDrones` incluso con latencia de red.
+   * **Trazabilidad de Atacante (`lastAttacker`):** Al aplicar daño, se registra el jugador atacante. Al destruirse un dron hostil (`owner == nil`), el servidor acredita la recompensa en `killer.leaderstats.PELAOCOINS` e invoca `OnBountyAwarded` al cliente.
+   * **Contramedida EMP (`OnEMPActivated.OnServerEvent`):** Controla cooldown de 10s por jugador. Instancia una onda esférica de choque neón cyan expansiva (60 studs) y desactiva `LinearVelocity` y `AlignOrientation` de todos los enemigos en el área por 3.0s, aplicando un `Highlight` diegético.
+2. **Cliente y Físicas (`DroneController.luau`):**
+   * **Mapeo de Controles:** Se liberó la tecla `C` de la función de descenso (reservada a `LeftShift`/`LeftControl`) y se reasignó a `TriggerEMP()`. Se mapeó `MouseButton1` a `FireWeapon()`.
+   * **Simulación Local Inmediata (Zero Latency VFX):** Al presionar LMB, se dispara de inmediato `LocalPlasmaBolt` hacia el punto de mira (centro en FPV o cono frontal asistido en 3ra persona) y se notifica al servidor.
+   * **Disipación Continua:** En `RenderStepped`, se aplica disipación térmica constante y liberación del estado de sobrecalentamiento al bajar de 50°C.
+3. **HUD y Feedback Diegético (`DroneHUD.luau`, `Main.client.luau`):**
+   * Se actualizó la barra superior de telemetría: `CAM: 3RA PERSONA // [LMB] PLASMA // [C] EMP // [V] FPV // [X] FRENO`.
+   * Se enlazó el evento `OnBountyAwarded` para desplegar notificaciones diegéticas doradas de recompensa en tiempo real (`¡HOSTIL NEUTRALIZADO! +XX PELAOCOINS 💰`).
+
+---
 *Fin del documento de auditoría técnica.*
 
 

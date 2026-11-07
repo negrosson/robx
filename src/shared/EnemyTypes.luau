@@ -78,8 +78,8 @@ local SCAV_GNATS: EnemySpec = {
 	fireRange       = 0,       -- sin armas de proyectil, solo embestida
 	burstWeapon     = "",
 
-	creditReward    = 15,
-	xpReward        = 10,
+	creditReward    = 35,
+	xpReward        = 15,
 
 	primaryColor    = COL_SCRAP,
 	accentColor     = COL_RUST,

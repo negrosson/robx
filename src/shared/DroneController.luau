@@ -4,6 +4,7 @@
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
 local Workspace         = game:GetService("Workspace")
 
@@ -262,6 +263,13 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		droneMassKg      = 5,         -- kg del chasis (para Ek de impacto)
 		cargoSpeedMult   = 1.0,       -- multiplicador de velocidad por carga (DroneCargo)
 
+		-- ═══ Arsenal Táctico y Contramedidas ═══
+		lastWeaponFire     = 0,
+		weaponCooldown     = 0.35,      -- cadencia de disparo (segundos)
+		lastEMPTime        = 0,
+		empCooldown        = 10.0,      -- recarga de pulso EMP (segundos)
+		isWeaponOverheated = false,
+
 		-- estado
 		isFPV      = false,
 		isFlying   = false,
@@ -437,6 +445,14 @@ function DroneController:StartFlying()
 			table.insert(filterList, lp.Character)
 		end
 		raycastParams.FilterDescendantsInstances = filterList
+
+		-- Disipación natural de calor en el cliente
+		if self.currentHeat and self.currentHeat > 0 and not self.isEMPed then
+			self.currentHeat = math.max(0, self.currentHeat - (self.heatCoolingRate or 8) * dt)
+			if self.currentHeat < 50 then
+				self.isWeaponOverheated = false
+			end
+		end
 
 		-- Turbo energy
 		local isBoosting = self.inputState.turbo and (self.turboEnergy > 5)
@@ -719,16 +735,19 @@ end
 ----------------------------------------------------------------------
 function DroneController:BindInputs()
 	self:UnbindInputs()
-	print("[DroneController] BindInputs() - WASD/Flechas/Space/Shift/Q/X/V activos")
+	print("[DroneController] BindInputs() - WASD/Flechas/Space/Shift/Q/X/V/LMB/C activos")
 
 	self.inputBeganConn = UserInputService.InputBegan:Connect(function(input: InputObject, _gpe: boolean)
 		local focused = UserInputService:GetFocusedTextBox()
 		if focused then return end
 
-		-- Si hace click mientras vuela en FPV, reactivar bloqueo de cursor centrado
+		-- Disparo táctico con MouseButton1 (LMB)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			if self.isFlying and self.isFPV then
-				UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+			if self.isFlying then
+				if self.isFPV then
+					UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+				end
+				self:FireWeapon()
 			end
 			return
 		end
@@ -741,7 +760,8 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.A          then self.inputState.left      = true
 		elseif k == Enum.KeyCode.D          then self.inputState.right     = true
 		elseif k == Enum.KeyCode.Space      then self.inputState.up        = true
-		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.C then self.inputState.down = true
+		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl then self.inputState.down = true
+		elseif k == Enum.KeyCode.C          then self:TriggerEMP()
 		elseif k == Enum.KeyCode.Q          then self.inputState.turbo     = true
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = true
 		elseif k == Enum.KeyCode.Left       then self.inputState.turnLeft  = true
@@ -819,7 +839,7 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.A          then self.inputState.left      = false
 		elseif k == Enum.KeyCode.D          then self.inputState.right     = false
 		elseif k == Enum.KeyCode.Space      then self.inputState.up        = false
-		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl or k == Enum.KeyCode.C then self.inputState.down = false
+		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl then self.inputState.down = false
 		elseif k == Enum.KeyCode.Q          then self.inputState.turbo     = false
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = false
 		elseif k == Enum.KeyCode.Left       then self.inputState.turnLeft  = false
@@ -866,8 +886,16 @@ end
 ----------------------------------------------------------------------
 
 -- Aplica daño al dron del jugador (recibido del servidor via RemoteEvent)
-function DroneController:ApplyDamage(finalDamage: number)
-	self.currentHealth = math.max(0, (self.currentHealth or self.maxHealth) - finalDamage)
+function DroneController:ApplyDamage(finalDamage: any)
+	local dmg = 0
+	if typeof(finalDamage) == "number" then
+		dmg = finalDamage
+	elseif typeof(finalDamage) == "table" and typeof(finalDamage.damage) == "number" then
+		dmg = finalDamage.damage
+	end
+	if dmg <= 0 then return end
+
+	self.currentHealth = math.max(0, (self.currentHealth or self.maxHealth) - dmg)
 	local hpPct = self.currentHealth / (self.maxHealth or 100)
 
 	if self.hud then
@@ -880,7 +908,7 @@ function DroneController:ApplyDamage(finalDamage: number)
 	if self.vfx then
 		pcall(function()
 			if (self.vfx :: any).PlayHitEffect then
-				(self.vfx :: any):PlayHitEffect(finalDamage)
+				(self.vfx :: any):PlayHitEffect(dmg)
 			end
 		end)
 	end
@@ -889,6 +917,186 @@ function DroneController:ApplyDamage(finalDamage: number)
 		warn("[DroneController] ¡Dron destruido! Desconectando enlace FPV...")
 		self:StopFlying()
 	end
+end
+
+-- Dispara el cañón de plasma frontal [MouseButton1]
+function DroneController:FireWeapon()
+	if not self.isFlying then return end
+	if self.isEMPed then return end
+	if self.isWeaponOverheated then
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function() (self.hud :: any):ShowHint("¡CAÑÓN SOBRECALENTADO! DISIPANDO CALOR...", true) end)
+		end
+		return
+	end
+
+	local now = os.clock()
+	if now - (self.lastWeaponFire or 0) < (self.weaponCooldown or 0.35) then
+		return
+	end
+	self.lastWeaponFire = now
+
+	-- Calcular origen y dirección
+	local cam = Workspace.CurrentCamera
+	local originPos = self.rootPart.Position + self.rootPart.CFrame.LookVector * (self.rootPart.Size.Z * 0.5 + 0.5)
+	local targetPos: Vector3
+	local targetPart: BasePart? = nil
+
+	if self.isFPV and cam then
+		local unitRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = { self.rootPart, Players.LocalPlayer and Players.LocalPlayer.Character }
+
+		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 200, rayParams)
+		if hit then
+			targetPos = hit.Position
+			if hit.Instance and hit.Instance:IsA("BasePart") then
+				targetPart = hit.Instance
+			end
+		else
+			targetPos = unitRay.Origin + unitRay.Direction * 180
+		end
+	else
+		-- 3ra persona: disparar hacia adelante con asistencia a enemigos cercanos
+		local forwardDir = self.rootPart.CFrame.LookVector
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = { self.rootPart, Players.LocalPlayer and Players.LocalPlayer.Character }
+
+		local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+		local bestDist = 180
+		if enemyFolder then
+			for _, enemy in ipairs(enemyFolder:GetChildren()) do
+				if enemy:IsA("BasePart") then
+					local toEnemy = enemy.Position - originPos
+					local dist = toEnemy.Magnitude
+					if dist < bestDist and forwardDir:Dot(toEnemy.Unit) > 0.85 then
+						bestDist = dist
+						targetPos = enemy.Position
+						targetPart = enemy
+					end
+				end
+			end
+		end
+
+		if not targetPos then
+			local hit = Workspace:Raycast(originPos, forwardDir * 180, rayParams)
+			if hit then
+				targetPos = hit.Position
+				if hit.Instance and hit.Instance:IsA("BasePart") then
+					targetPart = hit.Instance
+				end
+			else
+				targetPos = originPos + forwardDir * 180
+			end
+		end
+	end
+
+	-- Simulación de proyectil local inmediata para feedback visual sin lag de red
+	self:SpawnLocalPlasmaBolt(originPos, targetPos)
+
+	-- Generar calor en el chasis
+	self.currentHeat = math.min(self.maxHeat or 100, (self.currentHeat or 0) + 4)
+	if self.currentHeat >= 85 then
+		self.isWeaponOverheated = true
+	end
+
+	-- Notificar servidor para validación autoritativa de daño y efectos
+	local onFireEv = ReplicatedStorage:FindFirstChild("OnFireWeapon") :: RemoteEvent?
+	if onFireEv then
+		onFireEv:FireServer({
+			weaponId   = "magma_spike",
+			origin     = originPos,
+			target     = targetPos,
+			targetPart = targetPart,
+		})
+	end
+end
+
+-- Simula el proyectil de plasma en el cliente
+function DroneController:SpawnLocalPlasmaBolt(startPos: Vector3, endPos: Vector3)
+	local bolt = Instance.new("Part")
+	bolt.Name = "LocalPlasmaBolt"
+	bolt.Size = Vector3.new(0.5, 0.5, 2.0)
+	bolt.Material = Enum.Material.Neon
+	bolt.Color = Color3.fromRGB(255, 100, 0)
+	bolt.CanCollide = false
+	bolt.CastShadow = false
+	bolt.Massless = true
+	bolt.CFrame = CFrame.lookAt(startPos, endPos)
+	bolt.Parent = Workspace
+
+	local dist = (endPos - startPos).Magnitude
+	local duration = math.clamp(dist / 140, 0.05, 1.5)
+
+	local tween = TweenService:Create(
+		bolt,
+		TweenInfo.new(duration, Enum.EasingStyle.Linear),
+		{ CFrame = CFrame.lookAt(endPos, endPos + (endPos - startPos).Unit) }
+	)
+	tween:Play()
+	tween.Completed:Connect(function()
+		if bolt.Parent then
+			bolt:Destroy()
+		end
+	end)
+end
+
+-- Activa la contramedida de pulso electromagnético [C]
+function DroneController:TriggerEMP()
+	if not self.isFlying then return end
+	if self.isEMPed then return end
+
+	local now = os.clock()
+	local elapsed = now - (self.lastEMPTime or 0)
+	if elapsed < (self.empCooldown or 10.0) then
+		local remaining = math.ceil((self.empCooldown or 10.0) - elapsed)
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function() (self.hud :: any):ShowHint(string.format("PULSO EMP EN RECARGA (%ds)", remaining), true) end)
+		end
+		return
+	end
+	self.lastEMPTime = now
+
+	-- Onda expansiva esférica cyan local
+	self:SpawnLocalEMPWave(self.rootPart.Position)
+
+	if self.hud and (self.hud :: any).ShowHint then
+		pcall(function() (self.hud :: any):ShowHint("¡CONTRAMEDIDA EMP ACTIVADA! PARALIZANDO AMENAZAS", false) end)
+	end
+
+	-- Notificar servidor para aplicar contramedida autoritativa
+	local onEMPEv = ReplicatedStorage:FindFirstChild("OnEMPActivated") :: RemoteEvent?
+	if onEMPEv then
+		onEMPEv:FireServer()
+	end
+end
+
+-- Simula onda expansiva de pulso electromagnético local
+function DroneController:SpawnLocalEMPWave(centerPos: Vector3)
+	local sphere = Instance.new("Part")
+	sphere.Name = "LocalEMPWave"
+	sphere.Shape = Enum.PartType.Ball
+	sphere.Size = Vector3.new(2, 2, 2)
+	sphere.Position = centerPos
+	sphere.Material = Enum.Material.Neon
+	sphere.Color = Color3.fromRGB(0, 255, 230)
+	sphere.Transparency = 0.4
+	sphere.CanCollide = false
+	sphere.Anchored = true
+	sphere.CastShadow = false
+	sphere.Parent = Workspace
+
+	local tween = TweenService:Create(
+		sphere,
+		TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
+		{ Size = Vector3.new(120, 120, 120), Transparency = 1 }
+	)
+	tween:Play()
+	tween.Completed:Connect(function()
+		if sphere.Parent then sphere:Destroy() end
+	end)
 end
 
 -- Aplica calor y gestiona estado EMP en el cliente (eco del servidor)

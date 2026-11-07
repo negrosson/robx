@@ -233,6 +233,8 @@ function EnemyAIService_Spawn(specId: string, spawnPosition: Vector3, difficulty
 	local spec = EnemyTypes.Scale(baseSpec, difficulty or 0)
 	local spawnCF = CFrame.new(spawnPosition)
 	local part = buildEnemyPart(spec, spawnCF)
+	part:SetAttribute("EnemySpecId", spec.id)
+	part:SetAttribute("Bounty", spec.creditReward)
 
 	local lv = part:FindFirstChild("FlightVelocity") :: LinearVelocity
 	local ao = part:FindFirstChild("FlightOrientation") :: AlignOrientation
@@ -263,7 +265,8 @@ function EnemyAIService_Spawn(specId: string, spawnPosition: Vector3, difficulty
 			10,   -- heatCooling
 			spec.armorReduction,
 			0.2,  -- empResistance
-			nil   -- owner (NPC)
+			nil,  -- owner (NPC)
+			spec.creditReward -- recompensa en PELAOCOINS
 		)
 	end
 
