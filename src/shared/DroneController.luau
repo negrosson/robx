@@ -269,6 +269,7 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		lastEMPTime        = 0,
 		empCooldown        = 10.0,      -- recarga de pulso EMP (segundos)
 		isWeaponOverheated = false,
+		lastCargoDropTime  = 0,         -- Fase 5: cooldown entre expulsiones de carga por daño crítico
 
 		-- estado
 		isFPV      = false,
@@ -604,6 +605,23 @@ function DroneController:StartFlying()
 		local heatRatio = (self.currentHeat or 0) / (self.maxHeat or 100)
 		local empRemaining = math.max(0, (self.empCooldown or 10.0) - (os.clock() - (self.lastEMPTime or 0)))
 
+		local rushActive, rushRemaining, _ = false, 0, 1.0
+		if self.deliveryManager and (self.deliveryManager :: any).GetRushInfo then
+			rushActive, rushRemaining, _ = (self.deliveryManager :: any):GetRushInfo()
+		end
+
+		local pilotRank = "Cadete Aéreo"
+		local localPlr = Players.LocalPlayer
+		if localPlr then
+			local leaderstats = localPlr:FindFirstChild("leaderstats")
+			if leaderstats then
+				local rVal = leaderstats:FindFirstChild("Rango")
+				if rVal and rVal:IsA("StringValue") then
+					pilotRank = rVal.Value
+				end
+			end
+		end
+
 		-- HUD
 		if self.hud then
 			pcall(function()
@@ -631,7 +649,10 @@ function DroneController:StartFlying()
 					empRemaining,
 					self.rootPart.Position,
 					self.flightYaw,
-					dt
+					dt,
+					rushActive,
+					rushRemaining,
+					pilotRank
 				)
 			end)
 		end
@@ -928,6 +949,28 @@ function DroneController:ApplyDamage(finalDamage: any, attackerPos: Vector3?)
 				(self.vfx :: any):PlayHitEffect(dmg)
 			end
 		end)
+	end
+
+	-- Fase 5: Pérdida de Carga Física por Daño Crítico o Impacto Fuerte
+	local now = os.clock()
+	if (dmg >= 16 or self.currentHealth <= 35) and (now - (self.lastCargoDropTime or 0) > 4.0) then
+		if self.cargo and (self.cargo :: any).DropOnePackage then
+			local okDrop, dropped = pcall(function()
+				return (self.cargo :: any):DropOnePackage(self.rootPart.Position)
+			end)
+			if okDrop and dropped then
+				self.lastCargoDropTime = now
+				local remaining = if (self.cargo :: any).GetPackageCount then (self.cargo :: any):GetPackageCount() else 0
+				if self.deliveryManager and (self.deliveryManager :: any).NotifyCargoLost then
+					(self.deliveryManager :: any):NotifyCargoLost(remaining)
+				end
+				if self.hud and (self.hud :: any).ShowHint then
+					pcall(function()
+						(self.hud :: any):ShowHint("¡ALERTA! ¡PAQUETE EXPULSADO POR IMPACTO CRÍTICO!", true)
+					end)
+				end
+			end
+		end
 	end
 
 	if self.currentHealth <= 0 then

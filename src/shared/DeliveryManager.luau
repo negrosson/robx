@@ -49,6 +49,11 @@ export type ManagerInstance = {
 	-- Fase 1: Sistema de Racha y Amenaza
 	deliveryStreak: number,
 	streakMultiplier: number,
+	-- Fase 5: Contratos de Entrega Rápida (Rush Orders)
+	rushOrderActive: boolean,
+	rushTimeRemaining: number,
+	rushTotalTime: number,
+	rushMultiplier: number,
 }
 
 -- Tolerancias de aterrizaje generosas para jugabilidad fluida
@@ -217,6 +222,11 @@ function DeliveryManager.new(): ManagerInstance
 		maxPackages = 3,
 		deliveryStreak = 0,
 		streakMultiplier = 1.0,
+		-- Fase 5
+		rushOrderActive = false,
+		rushTimeRemaining = 0,
+		rushTotalTime = 0,
+		rushMultiplier = 1.0,
 	}
 
 	-- Auto-refrescar cuando se repliquen helipuertos del servidor
@@ -399,6 +409,25 @@ function DeliveryManager.PickNextTarget(self: ManagerInstance, lastDeliveredPadN
 	self.isLanded = false
 	self.currentZonePadName = nil
 
+	-- Fase 5: Asignación de Contratos de Entrega Prioritaria (Rush Orders)
+	local isRush = (math.random(1, 100) <= 65)
+	if isRush and self.packagesRemaining > 0 and self.currentTargetIndex > 0 then
+		local tgt = self.targets[self.currentTargetIndex]
+		if tgt and tgt.name ~= "Pad_Base" then
+			self.rushOrderActive = true
+			self.rushTotalTime = if tgt.threatLevel == "black_ops" then 60 else 45
+			self.rushTimeRemaining = self.rushTotalTime
+			self.rushMultiplier = 1.5
+			print(string.format("[DeliveryManager] ¡CONTRATO RUSH ACTIVADO! %.0fs para entregar en %s (+50%% bonus)", self.rushTotalTime, tgt.displayName))
+		else
+			self.rushOrderActive = false
+			self.rushTimeRemaining = 0
+		end
+	else
+		self.rushOrderActive = false
+		self.rushTimeRemaining = 0
+	end
+
 	local newTarget = self:GetCurrentTarget()
 	print(string.format("[DeliveryManager] Siguiente destino: %s (+%d ₵ | Carga: %d/%d)",
 		newTarget.displayName, newTarget.reward, self.packagesRemaining, self.maxPackages))
@@ -484,6 +513,15 @@ function DeliveryManager.Update(
 	dronePosition: Vector3,
 	droneVelocity: Vector3
 ): (boolean, number)
+	-- Fase 5: Temporizador de Entrega Prioritaria
+	if self.rushOrderActive and self.rushTimeRemaining > 0 then
+		self.rushTimeRemaining = math.max(0, self.rushTimeRemaining - dt)
+		if self.rushTimeRemaining <= 0 then
+			self.rushOrderActive = false
+			print("[DeliveryManager] Temporizador de Entrega Rápida expirado. Recompensa nominal restaurada.")
+		end
+	end
+
 	local inZone, target, _, _ = self:CheckPadZone(dronePosition, droneVelocity)
 
 	if inZone and target then
@@ -525,10 +563,23 @@ function DeliveryManager.CompleteDelivery(self: ManagerInstance, padName: string
 		self.claimEvent = resolveRemote("DeliveryCompleted")
 	end
 	if self.claimEvent then
-		print(string.format("[DeliveryManager] Enviando confirmación de operación en '%s' al servidor...", padName))
-		self.claimEvent:FireServer(padName)
+		local isRushClaim = (self.rushOrderActive and self.rushTimeRemaining > 0)
+		print(string.format("[DeliveryManager] Enviando confirmación de operación en '%s' al servidor (Rush:%s)...", padName, tostring(isRushClaim)))
+		self.claimEvent:FireServer(padName, isRushClaim)
 	else
 		warn("[DeliveryManager] No se pudo enviar evento: claimEvent es nil")
+	end
+end
+
+function DeliveryManager.GetRushInfo(self: ManagerInstance): (boolean, number, number)
+	return self.rushOrderActive, self.rushTimeRemaining, self.rushMultiplier
+end
+
+function DeliveryManager.NotifyCargoLost(self: ManagerInstance, remainingCount: number)
+	self.packagesRemaining = math.max(0, remainingCount)
+	if self.packagesRemaining <= 0 then
+		print("[DeliveryManager] ¡Carga perdida por impactos! Re-enrutando obligatoriamente a Base Central.")
+		self:PickNextTarget("")
 	end
 end
 

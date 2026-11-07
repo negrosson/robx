@@ -366,6 +366,17 @@ local playerStreaks: { [number]: number } = {}
 local CURRENCY_NAME = "PELAOCOINS"  -- Moneda del juego
 local MIN_DELIVERY_INTERVAL = 2.0  -- Cooldown mínimo entre entregas por jugador
 
+-- Rangos de piloto según entregas totales (Fase 5)
+local function getPilotRank(totalDeliveries: number): string
+	if totalDeliveries >= 16 then
+		return "As del Reparto"
+	elseif totalDeliveries >= 6 then
+		return "Piloto de Corredor"
+	else
+		return "Cadete Aéreo"
+	end
+end
+
 Players.PlayerAdded:Connect(function(player)
 	playerStreaks[player.UserId] = 0
 
@@ -382,6 +393,11 @@ Players.PlayerAdded:Connect(function(player)
 	deliveries.Name = "Entregas"
 	deliveries.Value = 0
 	deliveries.Parent = leaderstats
+
+	local rank = Instance.new("StringValue")
+	rank.Name = "Rango"
+	rank.Value = getPilotRank(0)
+	rank.Parent = leaderstats
 
 	player.CharacterAdded:Connect(function(char)
 		local hum = char:WaitForChild("Humanoid", 5) :: Humanoid?
@@ -400,7 +416,7 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- Validación estricta en el servidor para otorgar recompensas
-claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
+claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any, isRush: any)
 	if typeof(padName) ~= "string" then return end
 	if not dronePart then return end
 
@@ -489,20 +505,27 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 
 		local currentStreak = playerStreaks[player.UserId] or 0
 		local streakMultiplier = 1.0
+		local rankVal = leaderstats:FindFirstChild("Rango") :: StringValue?
 
 		if not isBase then
 			currentStreak += 1
 			playerStreaks[player.UserId] = currentStreak
 			deliveries.Value += 1
+
+			if rankVal then
+				rankVal.Value = getPilotRank(deliveries.Value)
+			end
+
 			-- Bono de racha: +10% por entrega adicional hasta +50% máximo
 			streakMultiplier = 1.0 + math.clamp((currentStreak - 1) * 0.10, 0, 0.50)
 		end
 
-		local finalReward = math.round(baseReward * streakMultiplier)
+		local rushMultiplier = if (isRush == true and not isBase) then 1.5 else 1.0
+		local finalReward = math.round(baseReward * streakMultiplier * rushMultiplier)
 		credits.Value += finalReward
 
-		print(string.format("[Servidor SEGURO] Operación en %s para %s (+%d %s | Racha: x%d | Mult: x%.2f)",
-			padName, player.Name, finalReward, credits.Name, currentStreak, streakMultiplier))
+		print(string.format("[Servidor SEGURO] Operación en %s para %s (+%d %s | Racha: x%d | Rush:%s | Rango: %s)",
+			padName, player.Name, finalReward, credits.Name, currentStreak, tostring(isRush == true), rankVal and rankVal.Value or "N/A"))
 
 		-- Pulso de escaneo y verificación holográfica en la torre receptora
 		if not isBase and basePad then

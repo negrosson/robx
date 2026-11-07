@@ -488,7 +488,53 @@ La Fase 4 del Plan Maestro implementa el pulido sensorial y la conciencia situac
    * Implementación de emisores de partículas de chispas instantáneas y destellos de emergencia en el chasis.
 
 ---
-*Fin del documento de auditoría técnica.*
+
+## 19. Fase 5: Rutas Dinámicas, Pérdida de Carga Física por Daño Crítico y Progresión de Rango
+
+### Contexto y Requerimientos
+La Fase 5 concluye el Plan Maestro cerrando el ciclo de juego (game loop) con tensión de riesgo/recompensa, contratos de alta velocidad y progresión de maestría:
+1. **Contratos de Entrega Prioritaria / Rush Orders (Temporizador y Multiplicador):**
+   * Al despachar una misión hacia un helipuerto receptor (Torre A o Torre B), existe una probabilidad del 65% de activar una entrega urgente (45s estándar, 60s en Black Ops).
+   * Completar la entrega antes de que expire el temporizador otorga un **+50% de bonificación en la recompensa final (`rushMultiplier = 1.5`)**, acumulable con el multiplicador de racha.
+   * El HUD refleja la cuenta regresiva en tiempo real en la tarjeta de despacho superior derecha con tipografía y color neón dorado de alta visibilidad.
+2. **Pérdida de Carga Física por Daño Crítico (Riesgo y Tensión Táctica):**
+   * Si el dron sufre un impacto contundente ($\ge 16$ de daño) o su integridad estructural cae a zona crítica ($\le 35\%$ HP), un desacople de emergencia expulsa uno de los paquetes magnéticos transportados.
+   * El paquete se desprende físicamente con corte de haz tractor y dispersión cinemática aleatoria (`AssemblyLinearVelocity` y `AssemblyAngularVelocity`), colisiones activas con el entorno y un rótulo holográfico diegético en el mundo: `CARGA DAÑADA // [EXPULSADA]` (desvaneciéndose con `Debris:AddItem` tras 25s).
+   * El `DeliveryManager` y el HUD actualizan de inmediato el inventario de bodega. Si la bodega queda en 0/3 por impactos, el sistema aborta la misión y re-enruta obligatoriamente al piloto hacia la Base Central para reabastecerse.
+3. **Sistema de Progresión y Rango de Piloto (Server-Authoritative):**
+   * Creación del atributo `Rango` (StringValue) en `leaderstats` del jugador:
+     * **Cadete Aéreo:** 0 a 5 entregas exitosas.
+     * **Piloto de Corredor:** 6 a 15 entregas exitosas.
+     * **As del Reparto:** 16+ entregas exitosas.
+   * El rango se valida y actualiza en el servidor tras cada entrega completada, y se proyecta diegéticamente en la tarjeta de misión del HUD del piloto (`RANGO: [AS DEL REPARTO]`).
+
+### Implementación y Arquitectura
+1. **Físicas y Logística (`DroneCargo.luau`):**
+   * Implementación de `DroneCargo.DropOnePackage(dropPosition)`:
+     * Remueve el último elemento de la pila de paquetes.
+     * Desactiva el haz tractor (`Beam`) y destruye la soldadura magnética (`Weld`).
+     * Asigna propiedades físicas libres (`Massless = false`, `CanCollide = true`, `Anchored = false`).
+     * Aplica el vector de velocidad del dron sumado a un vector de dispersión tridimensional y momento angular aleatorio.
+     * Añade `BillboardGui` diegético con aviso de carga dañada y programa su limpieza.
+     * Recalcula masa total y estabilidad del chasis en tiempo real.
+2. **Despacho y Contratos Dinámicos (`DeliveryManager.luau`):**
+   * Integración de campos `rushOrderActive`, `rushTimeRemaining`, `rushTotalTime` y `rushMultiplier`.
+   * En `PickNextTarget`: asignación probabilística de contratos de entrega rápida según nivel de amenaza.
+   * En `Update`: decremento delta-time del temporizador y restauración a entrega nominal si expira sin penalización severa.
+   * En `CompleteDelivery`: comunicación cliente-servidor indicando si el reclamo se efectuó dentro de la ventana de tiempo.
+   * `NotifyCargoLost`: sincronización ante eventos de desprendimiento físico y cambio automático de destino si no queda carga útil.
+3. **Validación Server-Side y Economía (`Main.server.luau`):**
+   * `getPilotRank(totalDeliveries)`: función determinista que clasifica al jugador.
+   * `leaderstats.Rango`: inicializado en `PlayerAdded`.
+   * En `claimDeliveryEvent.OnServerEvent`: validación estricta de tiempo de entrega rápida y actualización del rango del jugador en base a `deliveries.Value`, multiplicando la recompensa de `PELAOCOINS` de forma segura.
+4. **Telemetría e Interfaz Diegética (`DroneHUD.luau`, `DroneController.luau`):**
+   * Reorganización y expansión del contenedor `MissionBox` (de 255x156 a 260x192 px) para alojar ordenadamente `RushTimerLabel` y `RankBadge`.
+   * Enlace en el loop de `RenderStepped` de `DroneController` para proyectar el temporizador activo, el estado de bodega, la racha y el rango de piloto.
+   * Disparador en `ApplyDamage`: detección de impacto crítico con cooldown de 4s para prevenir desprendimiento instantáneo de todos los paquetes ante ráfagas múltiples.
+
+---
+*Fin del documento de auditoría técnica del Plan Maestro de 5 Fases.*
+
 
 
 

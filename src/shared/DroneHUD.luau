@@ -46,6 +46,9 @@ export type HUDInstance = {
 	radarSweep: Frame,
 	radarBlipPool: { Frame },
 	radarPadBlips: { [string]: Frame },
+	-- Fase 5: Rush Orders y Rango
+	rushTimerLabel: TextLabel,
+	rankBadge: TextLabel,
 }
 
 local COLOR_BG = Color3.fromRGB(8, 14, 24)
@@ -613,7 +616,7 @@ function DroneHUD.new(): HUDInstance
 	----------------------------------------------------------------------
 	local missionBox = Instance.new("Frame")
 	missionBox.Name = "MissionBox"
-	missionBox.Size = UDim2.fromOffset(255, 156)
+	missionBox.Size = UDim2.fromOffset(260, 192)
 	missionBox.AnchorPoint = Vector2.new(1, 0)
 	missionBox.Position = UDim2.new(1, -25, 0, 160)
 	missionBox.BackgroundColor3 = COLOR_BG
@@ -706,11 +709,25 @@ function DroneHUD.new(): HUDInstance
 	missionRewardLabel.TextXAlignment = Enum.TextXAlignment.Left
 	missionRewardLabel.Parent = missionBox
 
+	-- Orden Prioritaria / Rush Order Timer (Fase 5)
+	local rushTimerLabel = Instance.new("TextLabel")
+	rushTimerLabel.Name = "RushTimerLabel"
+	rushTimerLabel.Size = UDim2.new(1, -20, 0, 16)
+	rushTimerLabel.Position = UDim2.fromOffset(10, 92)
+	rushTimerLabel.BackgroundTransparency = 1
+	rushTimerLabel.Font = Enum.Font.Code
+	rushTimerLabel.Text = "RUSH: ⏱️ 45s (+50% BONUS)"
+	rushTimerLabel.TextColor3 = COLOR_NEON_YELLOW
+	rushTimerLabel.TextSize = 10
+	rushTimerLabel.TextXAlignment = Enum.TextXAlignment.Left
+	rushTimerLabel.Visible = false
+	rushTimerLabel.Parent = missionBox
+
 	-- Estado de bodega de paquetes (3/3)
 	local cargoStatusLabel = Instance.new("TextLabel")
 	cargoStatusLabel.Name = "CargoStatusLabel"
 	cargoStatusLabel.Size = UDim2.new(1, -20, 0, 16)
-	cargoStatusLabel.Position = UDim2.fromOffset(10, 94)
+	cargoStatusLabel.Position = UDim2.fromOffset(10, 110)
 	cargoStatusLabel.BackgroundTransparency = 1
 	cargoStatusLabel.Font = Enum.Font.RobotoMono
 	cargoStatusLabel.Text = "BODEGA: [📦 📦 📦] (3/3)"
@@ -723,7 +740,7 @@ function DroneHUD.new(): HUDInstance
 	local streakBadge = Instance.new("TextLabel")
 	streakBadge.Name = "StreakBadge"
 	streakBadge.Size = UDim2.new(1, -20, 0, 16)
-	streakBadge.Position = UDim2.fromOffset(10, 112)
+	streakBadge.Position = UDim2.fromOffset(10, 128)
 	streakBadge.BackgroundTransparency = 1
 	streakBadge.Font = Enum.Font.RobotoMono
 	streakBadge.Text = "RACHA: x1 (BONO AL ENCADENAR)"
@@ -732,11 +749,24 @@ function DroneHUD.new(): HUDInstance
 	streakBadge.TextXAlignment = Enum.TextXAlignment.Left
 	streakBadge.Parent = missionBox
 
+	-- Rango del Piloto (Fase 5)
+	local rankBadge = Instance.new("TextLabel")
+	rankBadge.Name = "RankBadge"
+	rankBadge.Size = UDim2.new(1, -20, 0, 16)
+	rankBadge.Position = UDim2.fromOffset(10, 146)
+	rankBadge.BackgroundTransparency = 1
+	rankBadge.Font = Enum.Font.RobotoMono
+	rankBadge.Text = "RANGO: [CADETE AÉREO]"
+	rankBadge.TextColor3 = COLOR_NEON_CYAN
+	rankBadge.TextSize = 10
+	rankBadge.TextXAlignment = Enum.TextXAlignment.Left
+	rankBadge.Parent = missionBox
+
 	-- Barra de confirmación de aterrizaje en pad
 	local landingBar = Instance.new("Frame")
 	landingBar.Name = "LandingBar"
 	landingBar.Size = UDim2.new(1, -20, 0, 6)
-	landingBar.Position = UDim2.fromOffset(10, 134)
+	landingBar.Position = UDim2.fromOffset(10, 168)
 	landingBar.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
 	landingBar.BorderSizePixel = 0
 	landingBar.Visible = false
@@ -855,6 +885,9 @@ function DroneHUD.new(): HUDInstance
 		radarSweep = radarSweep,
 		radarBlipPool = radarBlipPool,
 		radarPadBlips = radarPadBlips,
+		-- Fase 5: Rush Orders y Rango
+		rushTimerLabel = rushTimerLabel,
+		rankBadge = rankBadge,
 	}
 
 	return setmetatable(self, DroneHUD) :: any
@@ -885,7 +918,10 @@ function DroneHUD.Update(
 	empCooldownRemaining: number?,
 	playerDronePos: Vector3?,
 	playerDroneYaw: number?,
-	dt: number?
+	dt: number?,
+	rushActive: boolean?,
+	rushRemaining: number?,
+	pilotRank: string?
 )
 	-- 1. Velocímetro e impulso
 	local roundedSpeed = math.round(speed)
@@ -967,6 +1003,17 @@ function DroneHUD.Update(
 		self.streakBadge.Text = "RACHA: x1 (BONO AL ENCADENAR)"
 		self.streakBadge.TextColor3 = COLOR_TEXT_MUTED
 	end
+
+	-- 6b. Rush Timer y Rango de Piloto (Fase 5)
+	if rushActive and rushRemaining and rushRemaining > 0 then
+		self.rushTimerLabel.Visible = true
+		self.rushTimerLabel.Text = string.format("RUSH: ⏱️ %02ds (+50%% BONUS)", math.ceil(rushRemaining))
+		self.rushTimerLabel.TextColor3 = COLOR_NEON_YELLOW
+	else
+		self.rushTimerLabel.Visible = false
+	end
+
+	self.rankBadge.Text = string.format("RANGO: [%s]", (pilotRank or "CADETE AÉREO"):upper())
 
 	local remaining = cargoRemaining or 3
 	if remaining == 3 then

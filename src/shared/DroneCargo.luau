@@ -218,6 +218,62 @@ function DroneCargo.DeliverOnePackage(self: CargoInstance, dropPosition: Vector3
 	return true, self.packagesCount
 end
 
+-- Desprende un paquete físicamente por daño crítico o impacto violento (Fase 5)
+function DroneCargo.DropOnePackage(self: CargoInstance, dropPosition: Vector3): (boolean, number)
+	if self.packagesCount <= 0 or #self.packages == 0 then
+		return false, 0
+	end
+
+	local pkg = table.remove(self.packages)
+	if not pkg then return false, 0 end
+
+	print(string.format("[DroneCargo] ¡PAQUETE EXPULSADO POR IMPACTO! Desprendiendo paquete #%d", pkg.index))
+
+	if pkg.beam then pkg.beam.Enabled = false end
+	if pkg.weld and pkg.weld.Parent then pkg.weld:Destroy() end
+
+	local droppedBox = pkg.box
+	if droppedBox and droppedBox.Parent then
+		droppedBox.Massless = false
+		droppedBox.CanCollide = true
+		droppedBox.Anchored = false
+
+		local droneVel = self.rootPart.AssemblyLinearVelocity
+		local scatter = Vector3.new(math.random(-15, 15), math.random(-8, -2), math.random(-15, 15))
+		droppedBox.AssemblyLinearVelocity = droneVel + scatter
+		droppedBox.AssemblyAngularVelocity = Vector3.new(math.random(-4, 4), math.random(-4, 4), math.random(-4, 4))
+
+		local bbg = Instance.new("BillboardGui")
+		bbg.Name = "LostCargoTag"
+		bbg.Size = UDim2.fromOffset(190, 34)
+		bbg.StudsOffset = Vector3.new(0, 1.4, 0)
+		bbg.AlwaysOnTop = true
+		bbg.MaxDistance = 140
+
+		local tagLabel = Instance.new("TextLabel")
+		tagLabel.Size = UDim2.fromScale(1, 1)
+		tagLabel.BackgroundTransparency = 1
+		tagLabel.Font = Enum.Font.Code
+		tagLabel.Text = "CARGA DAÑADA // [EXPULSADA]"
+		tagLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+		tagLabel.TextSize = 12
+		tagLabel.TextStrokeTransparency = 0.2
+		tagLabel.Parent = bbg
+		bbg.Parent = droppedBox
+
+		if pkg.model then
+			pkg.model.Parent = workspace
+			Debris:AddItem(pkg.model, 25)
+		end
+	end
+
+	self.packagesCount = #self.packages
+	self.isLoaded = (self.packagesCount > 0)
+	self.cargoMass = self.packagesCount * CARGO_MASS_PER_PKG
+
+	return true, self.packagesCount
+end
+
 -- Reabastece completamente la bodega de carga en la Base Central
 function DroneCargo.RestockAtBase(self: CargoInstance): (boolean, number)
 	if self.packagesCount >= self.maxPackages and self.isLoaded then
