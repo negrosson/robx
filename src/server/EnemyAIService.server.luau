@@ -313,9 +313,9 @@ local function handleRamming(agent: EnemyAgent)
 	end)
 	Debris:AddItem(sparkPart, 0.6)
 
-	-- Registrar daño en CombatService
+	-- Registrar daño en CombatService con vector de procedencia
 	if _G.CombatService and _G.CombatService.ApplyDamage then
-		_G.CombatService.ApplyDamage(agent.targetPart, 14)
+		_G.CombatService.ApplyDamage(agent.targetPart, 14, nil, agent.part.Position)
 	end
 
 	print(string.format("[EnemyAIService] %s embistió al jugador (%.0f N | -14 HP)", agent.spec.name, agent.spec.rammingImpulse))
@@ -380,7 +380,7 @@ local function handleFiring(agent: EnemyAgent)
 		Debris:AddItem(tracer, 0.15)
 
 		if _G.CombatService and _G.CombatService.ApplyDamage then
-			_G.CombatService.ApplyDamage(agent.targetPart, 22)
+			_G.CombatService.ApplyDamage(agent.targetPart, 22, nil, agent.part.Position)
 		end
 		print(string.format("[EnemyAIService] %s disparó Rail-Driver Gauss (-22 HP)", agent.spec.name))
 	end

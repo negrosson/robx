@@ -466,6 +466,28 @@ La Fase 3 del Plan Maestro dota al dron de reparto de capacidades activas ofensi
    * Se enlazó el evento `OnBountyAwarded` para desplegar notificaciones diegéticas doradas de recompensa en tiempo real (`¡HOSTIL NEUTRALIZADO! +XX PELAOCOINS 💰`).
 
 ---
+
+## 18. Fase 4: Telemetría HUD Avanzada, Barras de Núcleo (HP/Heat), Radar Táctico 360° y Viñeta de Daño
+
+### Contexto y Requerimientos
+La Fase 4 del Plan Maestro implementa el pulido sensorial y la conciencia situacional espacial del piloto en cabina y tercera persona:
+1. **Barras Diegéticas de Integridad HP y Calor Térmico:** Visualización continua de la salud del dron con transición de color (Verde >60% -> Amarillo 30-60% -> Rojo crítico <30%) y barra térmica de magma con avisos de sobrecalentamiento y estado de parálisis EMP.
+2. **Minimapa / Radar Táctico 360° Diegético (Rango 250 studs):** Radar circular militar cyberpunk en la esquina superior izquierda con barrido radial (`RadarSweep`), proyección angular curso-arriba (course-up), blips codificados por color para helipuertos (Base cyan, Torre A amarillo, Torre B fucsia) y amenazas hostiles (Torreta Aegis ámbar, Interceptor Kuroshio carmesí, Enjambre Scav-Gnat rojo).
+3. **Indicador de Daño Direccional y Viñeta de Impacto:** Flash perimetral rojo en pantalla ante impactos y flecha diegética rotada hacia el vector de origen del atacante.
+4. **Pulido Sensorial VFX (`DroneVFX.luau`):** Emisión reactiva de chispas de desgaste (`PlayHitEffect`) y sobretensión de luz de chasis ante descargas EMP (`PlayEMPEffect`).
+
+### Implementación y Arquitectura
+1. **Interfaz HUD (`DroneHUD.luau`):**
+   * **`CombatStatusBox`:** Panel compacto integrado sobre el velocímetro con gauges de `INTEGRIDAD HP`, `CALOR NÚCLEO` y estado del `PULSO EMP [C]`.
+   * **`ThreatRadar`:** Renderizado a 60 FPS con proyección trigonométrica local (`PointToObjectSpace`) orientada según el rumbo `flightYaw` del dron, reutilizando un pool de blips pre-instanciados sin crear basura de memoria (Garbage Collection friendly).
+   * **`DamageOverlay` y `DamageIndicatorArrow`:** Reacción inmediata a paquetes de daño recibidos del servidor.
+2. **Controlador y Comunicación (`DroneController.luau`, `Main.client.luau`, `CombatService.server.luau`):**
+   * El ciclo de render pasa telemetría en tiempo real de HP, calor, cooldown de EMP y vector de orientación del dron al HUD.
+   * `CombatService` y `EnemyAIService` empaquetan el vector `attackerPosition` en los eventos de impacto para alimentar la flecha de daño direccional del cliente.
+3. **Efectos Visuales (`DroneVFX.luau`):**
+   * Implementación de emisores de partículas de chispas instantáneas y destellos de emergencia en el chasis.
+
+---
 *Fin del documento de auditoría técnica.*
 
 

@@ -290,8 +290,8 @@ task.spawn(function()
 	task.spawn(function()
 		local onDmg = ReplicatedStorage:WaitForChild("OnDamageTaken", 10)
 		if onDmg and onDmg:IsA("RemoteEvent") then
-			(onDmg :: RemoteEvent).OnClientEvent:Connect(function(damage: number)
-				if myDrone then pcall(function() myDrone:ApplyDamage(damage) end) end
+			(onDmg :: RemoteEvent).OnClientEvent:Connect(function(damageData: any)
+				if myDrone then pcall(function() myDrone:ApplyDamage(damageData) end) end
 			end)
 			dbg("OnDamageTaken conectado")
 		end

@@ -261,7 +261,7 @@ local function triggerEMP(state: DroneState)
 end
 
 -- Aplica daño a un DroneState con mitigación de blindaje
-local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any, attackerPlayer: Player?)
+local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any, attackerPlayer: Player?, sourcePos: Vector3?)
 	if attackerPlayer then
 		state.lastAttacker = attackerPlayer
 	end
@@ -270,13 +270,19 @@ local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any
 	local finalDmg = math.max(1, rawDamage * (1 - mitigation))
 	state.health = math.max(0, state.health - finalDmg)
 
-	-- Notificar al dueño del dron
+	-- Notificar al dueño del dron con posición del atacante para HUD direccional
 	if state.owner then
+		local pos = sourcePos
+		if not pos and attackerPlayer and attackerPlayer.Character and attackerPlayer.Character.PrimaryPart then
+			pos = attackerPlayer.Character.PrimaryPart.Position
+		end
+
 		onDamagedEvent:FireClient(state.owner, {
-			damage    = finalDmg,
-			rawDamage = rawDamage,
-			weapon    = weaponSpec and weaponSpec.name or "Unknown",
-			healthPct = state.health / state.maxHealth,
+			damage           = finalDmg,
+			rawDamage        = rawDamage,
+			weapon           = weaponSpec and weaponSpec.name or "Hostil",
+			healthPct        = state.health / state.maxHealth,
+			attackerPosition = pos,
 		})
 	end
 
@@ -670,9 +676,9 @@ end)
 _G.CombatService = {
 	Register   = CombatService_Register,
 	Unregister = CombatService_Unregister,
-	ApplyDamage = function(part: BasePart, damage: number, attackerPlayer: Player?)
+	ApplyDamage = function(part: BasePart, damage: number, attackerPlayer: Player?, sourcePos: Vector3?)
 		local state = activeDrones[part]
-		if state then applyDamage(state, damage, nil, attackerPlayer) end
+		if state then applyDamage(state, damage, nil, attackerPlayer, sourcePos) end
 	end,
 	ApplyHeat = function(part: BasePart, heat: number)
 		local state = activeDrones[part]

@@ -600,6 +600,10 @@ function DroneController:StartFlying()
 		local streakCount = if self.deliveryManager and (self.deliveryManager :: any).GetDeliveryStreak then (self.deliveryManager :: any):GetDeliveryStreak() else 0
 		local streakMult = if self.deliveryManager and (self.deliveryManager :: any).GetStreakMultiplier then (self.deliveryManager :: any):GetStreakMultiplier() else 1.0
 
+		local hpRatio = (self.currentHealth or 100) / (self.maxHealth or 100)
+		local heatRatio = (self.currentHeat or 0) / (self.maxHeat or 100)
+		local empRemaining = math.max(0, (self.empCooldown or 10.0) - (os.clock() - (self.lastEMPTime or 0)))
+
 		-- HUD
 		if self.hud then
 			pcall(function()
@@ -620,7 +624,14 @@ function DroneController:StartFlying()
 					currentTarget and currentTarget.threatLevel or "safe",
 					currentTarget and currentTarget.hazardInfo or "ZONA NOMINAL",
 					streakCount,
-					streakMult
+					streakMult,
+					hpRatio,
+					heatRatio,
+					self.isEMPed,
+					empRemaining,
+					self.rootPart.Position,
+					self.flightYaw,
+					dt
 				)
 			end)
 		end
@@ -886,12 +897,15 @@ end
 ----------------------------------------------------------------------
 
 -- Aplica daño al dron del jugador (recibido del servidor via RemoteEvent)
-function DroneController:ApplyDamage(finalDamage: any)
+function DroneController:ApplyDamage(finalDamage: any, attackerPos: Vector3?)
 	local dmg = 0
 	if typeof(finalDamage) == "number" then
 		dmg = finalDamage
 	elseif typeof(finalDamage) == "table" and typeof(finalDamage.damage) == "number" then
 		dmg = finalDamage.damage
+		if typeof((finalDamage :: any).attackerPosition) == "Vector3" then
+			attackerPos = (finalDamage :: any).attackerPosition
+		end
 	end
 	if dmg <= 0 then return end
 
@@ -902,6 +916,9 @@ function DroneController:ApplyDamage(finalDamage: any)
 		pcall(function()
 			if (self.hud :: any).SetHealthDisplay then
 				(self.hud :: any):SetHealthDisplay(hpPct)
+			end
+			if (self.hud :: any).FlashDamageVignette then
+				(self.hud :: any):FlashDamageVignette(dmg, attackerPos, self.rootPart.Position, self.flightYaw)
 			end
 		end)
 	end

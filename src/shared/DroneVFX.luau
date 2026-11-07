@@ -130,6 +130,72 @@ function DroneVFX.Update(self: VFXInstance, speedRatio: number, verticalInput: n
 	end
 end
 
+-- ═══ Pulido Sensorial: Reacción a impactos y daño de proyectil ═══
+function DroneVFX.PlayHitEffect(self: VFXInstance, damage: number)
+	if not self.rootPart or not self.rootPart.Parent then return end
+
+	-- Emisión de chispas de daño cinético/térmico en el chasis
+	local sparkPart = Instance.new("Part")
+	sparkPart.Name = "HitSparks"
+	sparkPart.Size = Vector3.new(0.5, 0.5, 0.5)
+	sparkPart.CFrame = self.rootPart.CFrame
+	sparkPart.Transparency = 1
+	sparkPart.Anchored = true
+	sparkPart.CanCollide = false
+	sparkPart.Parent = Workspace
+
+	local pe = Instance.new("ParticleEmitter")
+	pe.Color = ColorSequence.new(Color3.fromRGB(255, 140, 0), Color3.fromRGB(255, 30, 30))
+	pe.LightEmission = 1
+	pe.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.4),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	pe.Speed = NumberRange.new(10, 24)
+	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Lifetime = NumberRange.new(0.2, 0.45)
+	pe.Rate = 0
+	pe.Parent = sparkPart
+	pe:Emit(math.clamp(math.round(damage * 1.5), 10, 30))
+
+	-- Pulso de advertencia en la iluminación de fondo
+	if self.underLight and self.underLight.Parent then
+		local prevCol = self.underLight.Color
+		local prevBright = self.underLight.Brightness
+		self.underLight.Color = Color3.fromRGB(255, 30, 40)
+		self.underLight.Brightness = 8
+		task.delay(0.2, function()
+			if self.underLight and self.underLight.Parent then
+				self.underLight.Color = prevCol
+				self.underLight.Brightness = prevBright
+			end
+		end)
+	end
+
+	task.delay(0.6, function()
+		if sparkPart.Parent then sparkPart:Destroy() end
+	end)
+end
+
+-- ═══ Pulido Sensorial: Reacción a sobrecarga EMP ═══
+function DroneVFX.PlayEMPEffect(self: VFXInstance)
+	if not self.rootPart or not self.rootPart.Parent then return end
+
+	if self.underLight and self.underLight.Parent then
+		local prevCol = self.underLight.Color
+		local prevBright = self.underLight.Brightness
+		self.underLight.Color = Color3.fromRGB(0, 255, 240)
+		self.underLight.Brightness = 12
+
+		task.delay(0.5, function()
+			if self.underLight and self.underLight.Parent then
+				self.underLight.Color = prevCol
+				self.underLight.Brightness = prevBright
+			end
+		end)
+	end
+end
+
 function DroneVFX.Destroy(self: VFXInstance)
 	for _, trail in ipairs(self.trails) do
 		if trail and trail.Parent then trail:Destroy() end
