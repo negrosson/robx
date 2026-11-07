@@ -21,10 +21,14 @@ export type HUDInstance = {
 	horizonLine: Frame,
 	waypointMarker: Frame,
 	waypointLabel: TextLabel,
+	wpDiamond: TextLabel,
 	missionBox: Frame,
 	missionTargetLabel: TextLabel,
 	missionRewardLabel: TextLabel,
 	cargoStatusLabel: TextLabel,
+	threatBadge: TextLabel,
+	hazardLabel: TextLabel,
+	streakBadge: TextLabel,
 	landingBar: Frame,
 	landingFill: Frame,
 	successPopup: Frame,
@@ -320,7 +324,7 @@ function DroneHUD.new(): HUDInstance
 	----------------------------------------------------------------------
 	local missionBox = Instance.new("Frame")
 	missionBox.Name = "MissionBox"
-	missionBox.Size = UDim2.fromOffset(240, 118)
+	missionBox.Size = UDim2.fromOffset(255, 156)
 	missionBox.AnchorPoint = Vector2.new(1, 0)
 	missionBox.Position = UDim2.new(1, -25, 0, 160)
 	missionBox.BackgroundColor3 = COLOR_BG
@@ -333,64 +337,117 @@ function DroneHUD.new(): HUDInstance
 	missionCorner.Parent = missionBox
 
 	local missionStroke = Instance.new("UIStroke")
+	missionStroke.Name = "MissionStroke"
 	missionStroke.Color = COLOR_NEON_YELLOW
 	missionStroke.Thickness = 1.5
 	missionStroke.Transparency = 0.3
 	missionStroke.Parent = missionBox
 
 	local missionHeader = Instance.new("TextLabel")
-	missionHeader.Size = UDim2.new(1, -20, 0, 16)
-	missionHeader.Position = UDim2.fromOffset(10, 8)
+	missionHeader.Size = UDim2.new(1, -20, 0, 14)
+	missionHeader.Position = UDim2.fromOffset(10, 6)
 	missionHeader.BackgroundTransparency = 1
 	missionHeader.Font = Enum.Font.RobotoMono
 	missionHeader.Text = "MISIÓN DE REPARTO // DISPATCH"
 	missionHeader.TextColor3 = COLOR_NEON_YELLOW
-	missionHeader.TextSize = 11
+	missionHeader.TextSize = 10
 	missionHeader.TextXAlignment = Enum.TextXAlignment.Left
 	missionHeader.Parent = missionBox
 
+	-- Insignia/Pill del nivel de amenaza táctica
+	local threatBadge = Instance.new("TextLabel")
+	threatBadge.Name = "ThreatBadge"
+	threatBadge.Size = UDim2.new(1, -20, 0, 18)
+	threatBadge.Position = UDim2.fromOffset(10, 22)
+	threatBadge.BackgroundColor3 = Color3.fromRGB(15, 30, 25)
+	threatBadge.BackgroundTransparency = 0.4
+	threatBadge.BorderSizePixel = 0
+	threatBadge.Font = Enum.Font.Code
+	threatBadge.Text = " [🟢 AMENAZA: SEGURO]"
+	threatBadge.TextColor3 = Color3.fromRGB(0, 255, 180)
+	threatBadge.TextSize = 10
+	threatBadge.TextXAlignment = Enum.TextXAlignment.Left
+	threatBadge.Parent = missionBox
+
+	local threatCorner = Instance.new("UICorner")
+	threatCorner.CornerRadius = UDim.new(0, 4)
+	threatCorner.Parent = threatBadge
+
+	local threatStroke = Instance.new("UIStroke")
+	threatStroke.Name = "ThreatStroke"
+	threatStroke.Color = Color3.fromRGB(0, 255, 180)
+	threatStroke.Thickness = 1
+	threatStroke.Transparency = 0.4
+	threatStroke.Parent = threatBadge
+
+	-- Inteligencia de peligro / hazard
+	local hazardLabel = Instance.new("TextLabel")
+	hazardLabel.Name = "HazardLabel"
+	hazardLabel.Size = UDim2.new(1, -20, 0, 14)
+	hazardLabel.Position = UDim2.fromOffset(10, 42)
+	hazardLabel.BackgroundTransparency = 1
+	hazardLabel.Font = Enum.Font.RobotoMono
+	hazardLabel.Text = "INTEL: Vuelo comercial nominal"
+	hazardLabel.TextColor3 = COLOR_TEXT_MUTED
+	hazardLabel.TextSize = 9
+	hazardLabel.TextXAlignment = Enum.TextXAlignment.Left
+	hazardLabel.Parent = missionBox
+
 	local missionTargetLabel = Instance.new("TextLabel")
 	missionTargetLabel.Name = "TargetLabel"
-	missionTargetLabel.Size = UDim2.new(1, -20, 0, 20)
-	missionTargetLabel.Position = UDim2.fromOffset(10, 26)
+	missionTargetLabel.Size = UDim2.new(1, -20, 0, 18)
+	missionTargetLabel.Position = UDim2.fromOffset(10, 58)
 	missionTargetLabel.BackgroundTransparency = 1
 	missionTargetLabel.Font = Enum.Font.Code
 	missionTargetLabel.Text = "DESTINO: Torre A"
 	missionTargetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	missionTargetLabel.TextSize = 13
+	missionTargetLabel.TextSize = 12
 	missionTargetLabel.TextXAlignment = Enum.TextXAlignment.Left
 	missionTargetLabel.Parent = missionBox
 
 	local missionRewardLabel = Instance.new("TextLabel")
 	missionRewardLabel.Name = "RewardLabel"
-	missionRewardLabel.Size = UDim2.new(1, -20, 0, 18)
-	missionRewardLabel.Position = UDim2.fromOffset(10, 48)
+	missionRewardLabel.Size = UDim2.new(1, -20, 0, 16)
+	missionRewardLabel.Position = UDim2.fromOffset(10, 76)
 	missionRewardLabel.BackgroundTransparency = 1
 	missionRewardLabel.Font = Enum.Font.RobotoMono
 	missionRewardLabel.Text = string.format("RECOMPENSA: +250 %s", getCurrencyName())
 	missionRewardLabel.TextColor3 = COLOR_NEON_CYAN
-	missionRewardLabel.TextSize = 12
+	missionRewardLabel.TextSize = 11
 	missionRewardLabel.TextXAlignment = Enum.TextXAlignment.Left
 	missionRewardLabel.Parent = missionBox
 
 	-- Estado de bodega de paquetes (3/3)
 	local cargoStatusLabel = Instance.new("TextLabel")
 	cargoStatusLabel.Name = "CargoStatusLabel"
-	cargoStatusLabel.Size = UDim2.new(1, -20, 0, 18)
-	cargoStatusLabel.Position = UDim2.fromOffset(10, 68)
+	cargoStatusLabel.Size = UDim2.new(1, -20, 0, 16)
+	cargoStatusLabel.Position = UDim2.fromOffset(10, 94)
 	cargoStatusLabel.BackgroundTransparency = 1
 	cargoStatusLabel.Font = Enum.Font.RobotoMono
 	cargoStatusLabel.Text = "BODEGA: [📦 📦 📦] (3/3)"
 	cargoStatusLabel.TextColor3 = COLOR_NEON_CYAN
-	cargoStatusLabel.TextSize = 12
+	cargoStatusLabel.TextSize = 11
 	cargoStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 	cargoStatusLabel.Parent = missionBox
+
+	-- Indicador de Racha (Streak)
+	local streakBadge = Instance.new("TextLabel")
+	streakBadge.Name = "StreakBadge"
+	streakBadge.Size = UDim2.new(1, -20, 0, 16)
+	streakBadge.Position = UDim2.fromOffset(10, 112)
+	streakBadge.BackgroundTransparency = 1
+	streakBadge.Font = Enum.Font.RobotoMono
+	streakBadge.Text = "RACHA: x1 (BONO AL ENCADENAR)"
+	streakBadge.TextColor3 = COLOR_TEXT_MUTED
+	streakBadge.TextSize = 10
+	streakBadge.TextXAlignment = Enum.TextXAlignment.Left
+	streakBadge.Parent = missionBox
 
 	-- Barra de confirmación de aterrizaje en pad
 	local landingBar = Instance.new("Frame")
 	landingBar.Name = "LandingBar"
 	landingBar.Size = UDim2.new(1, -20, 0, 6)
-	landingBar.Position = UDim2.fromOffset(10, 96)
+	landingBar.Position = UDim2.fromOffset(10, 134)
 	landingBar.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
 	landingBar.BorderSizePixel = 0
 	landingBar.Visible = false
@@ -415,6 +472,7 @@ function DroneHUD.new(): HUDInstance
 	waypointMarker.Parent = mainContainer
 
 	local wpDiamond = Instance.new("TextLabel")
+	wpDiamond.Name = "WpDiamond"
 	wpDiamond.Size = UDim2.fromOffset(24, 24)
 	wpDiamond.Position = UDim2.fromOffset(68, 0)
 	wpDiamond.BackgroundTransparency = 1
@@ -483,10 +541,14 @@ function DroneHUD.new(): HUDInstance
 		horizonLine = horizonLine,
 		waypointMarker = waypointMarker,
 		waypointLabel = waypointLabel,
+		wpDiamond = wpDiamond,
 		missionBox = missionBox,
 		missionTargetLabel = missionTargetLabel,
 		missionRewardLabel = missionRewardLabel,
 		cargoStatusLabel = cargoStatusLabel,
+		threatBadge = threatBadge,
+		hazardLabel = hazardLabel,
+		streakBadge = streakBadge,
 		landingBar = landingBar,
 		landingFill = landingFill,
 		successPopup = successPopup,
@@ -510,7 +572,11 @@ function DroneHUD.Update(
 	targetReward: number?,
 	landingProgress: number,
 	cargoRemaining: number?,
-	cargoMax: number?
+	cargoMax: number?,
+	threatLevel: string?,
+	hazardInfo: string?,
+	deliveryStreak: number?,
+	streakMultiplier: number?
 )
 	-- 1. Velocímetro e impulso
 	local roundedSpeed = math.round(speed)
@@ -552,10 +618,45 @@ function DroneHUD.Update(
 		self.camLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
 	end
 
-	-- 6. Tarjeta de misión y estado de bodega
+	-- 6. Tarjeta de misión, amenaza, racha y estado de bodega
+	local tLevel = threatLevel or "safe"
+	local wpColor = Color3.fromRGB(0, 255, 180)
+
+	if tLevel == "black_ops" then
+		wpColor = COLOR_NEON_PINK
+		self.threatBadge.Text = " [🔴 AMENAZA: BLACK OPS]"
+		self.threatBadge.TextColor3 = COLOR_NEON_PINK
+		local stroke = self.threatBadge:FindFirstChild("ThreatStroke") :: UIStroke?
+		if stroke then stroke.Color = COLOR_NEON_PINK end
+	elseif tLevel == "hostile" then
+		wpColor = COLOR_NEON_YELLOW
+		self.threatBadge.Text = " [🟡 AMENAZA: HOSTIL]"
+		self.threatBadge.TextColor3 = COLOR_NEON_YELLOW
+		local stroke = self.threatBadge:FindFirstChild("ThreatStroke") :: UIStroke?
+		if stroke then stroke.Color = COLOR_NEON_YELLOW end
+	else
+		wpColor = Color3.fromRGB(0, 255, 180)
+		self.threatBadge.Text = " [🟢 AMENAZA: SEGURO]"
+		self.threatBadge.TextColor3 = Color3.fromRGB(0, 255, 180)
+		local stroke = self.threatBadge:FindFirstChild("ThreatStroke") :: UIStroke?
+		if stroke then stroke.Color = Color3.fromRGB(0, 255, 180) end
+	end
+
+	self.hazardLabel.Text = "INTEL: " .. (hazardInfo or "Vuelo nominal")
+
 	if targetDisplayName then
 		self.missionTargetLabel.Text = "DESTINO: " .. targetDisplayName
 		self.missionRewardLabel.Text = string.format("RECOMPENSA: +%d %s", targetReward or 250, getCurrencyName())
+	end
+
+	local streak = deliveryStreak or 0
+	local mult = streakMultiplier or 1.0
+	if streak > 1 then
+		self.streakBadge.Text = string.format("RACHA: x%d 🔥 (+%.0f%% BONUS)", streak, (mult - 1) * 100)
+		self.streakBadge.TextColor3 = COLOR_NEON_YELLOW
+	else
+		self.streakBadge.Text = "RACHA: x1 (BONO AL ENCADENAR)"
+		self.streakBadge.TextColor3 = COLOR_TEXT_MUTED
 	end
 
 	local remaining = cargoRemaining or 3
@@ -582,7 +683,10 @@ function DroneHUD.Update(
 		self.landingBar.Visible = false
 	end
 
-	-- 7. Waypoint 3D Holográfico en el visor
+	-- 7. Waypoint 3D Holográfico en el visor teñido según el nivel de amenaza
+	self.wpDiamond.TextColor3 = wpColor
+	self.waypointLabel.TextColor3 = wpColor
+
 	local camera = Workspace.CurrentCamera
 	if targetPosition and camera then
 		local screenPos, onScreen = camera:WorldToViewportPoint(targetPosition)
@@ -610,24 +714,36 @@ function DroneHUD.Update(
 	end
 end
 
-function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName: string, remainingCargo: number?, isRestock: boolean?)
+function DroneHUD.ShowSuccessPopup(
+	self: HUDInstance,
+	reward: number,
+	targetName: string,
+	remainingCargo: number?,
+	isRestock: boolean?,
+	streak: number?,
+	multiplier: number?
+)
+	local currency = getCurrencyName()
 	if isRestock then
-		self.successText.Text = string.format("¡BODEGA REABASTECIDA EN %s!\n+%d %s (3/3 Paquetes Listos)", targetName:upper(), reward, getCurrencyName())
+		local rachaTxt = if streak and streak > 1 then string.format(" (Racha x%d conservada)", streak) else ""
+		self.successText.Text = string.format("¡BODEGA REABASTECIDA EN %s!\n+%d %s (3/3 Paquetes Listos)%s", targetName:upper(), reward, currency, rachaTxt)
 		self.successText.TextColor3 = COLOR_NEON_CYAN
 	elseif remainingCargo == 0 then
-		self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s\n¡BODEGA VACÍA! REGRESA A BASE", targetName:upper(), reward, getCurrencyName())
+		local streakTxt = if streak and streak > 1 then string.format(" (¡Racha x%d! 🔥)", streak) else ""
+		self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s%s\n¡BODEGA VACÍA! REGRESA A BASE", targetName:upper(), reward, currency, streakTxt)
 		self.successText.TextColor3 = COLOR_NEON_YELLOW
 	else
-		self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s (Quedan %d en bodega)", targetName:upper(), reward, getCurrencyName(), remainingCargo or 1)
+		local streakTxt = if streak and streak > 1 then string.format(" (¡Racha x%d! 🔥)", streak) else ""
+		self.successText.Text = string.format("¡ENTREGA EXITOSA EN %s!\n+%d %s%s (Quedan %d en bodega)", targetName:upper(), reward, currency, streakTxt, remainingCargo or 1)
 		self.successText.TextColor3 = COLOR_NEON_YELLOW
 	end
 	self.successPopup.Visible = true
-	self.successPopup.Size = UDim2.fromOffset(360, 60)
+	self.successPopup.Size = UDim2.fromOffset(380, 64)
 
 	local tween = TweenService:Create(
 		self.successPopup,
 		TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Size = UDim2.fromOffset(380, 68) }
+		{ Size = UDim2.fromOffset(400, 72) }
 	)
 	tween:Play()
 
@@ -636,7 +752,7 @@ function DroneHUD.ShowSuccessPopup(self: HUDInstance, reward: number, targetName
 			local fade = TweenService:Create(
 				self.successPopup,
 				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Size = UDim2.fromOffset(300, 20), BackgroundTransparency = 1 }
+				{ Size = UDim2.fromOffset(320, 20), BackgroundTransparency = 1 }
 			)
 			fade:Play()
 			fade.Completed:Connect(function()

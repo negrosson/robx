@@ -202,16 +202,21 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	signLabel.BackgroundTransparency = 1
 	signLabel.Font = Enum.Font.Code
 	local signText = "BASE"
+	local threatSubtext = "[ZONA VERDE // REABASTECIMIENTO]"
 	if name == "Pad_TorreA" then
 		signText = "TORRE A"
+		threatSubtext = "[AMENAZA: HOSTIL 🟡 // +250 ₵]"
 	elseif name == "Pad_TorreB" then
 		signText = "TORRE B"
+		threatSubtext = "[AMENAZA: BLACK OPS 🔴 // +400 ₵]"
 	elseif name == "Pad_Base" then
-		signText = "BASE"
+		signText = "BASE CENTRAL"
+		threatSubtext = "[ZONA VERDE // REABASTECIMIENTO]"
 	else
 		signText = name:gsub("Pad_", ""):upper()
+		threatSubtext = "[CORREDOR DE ENTREGA]"
 	end
-	signLabel.Text = string.format("◀ %s ▶\n[ZONA DE ATERRIZAJE]", signText)
+	signLabel.Text = string.format("◀ %s ▶\n%s", signText, threatSubtext)
 	signLabel.TextColor3 = primaryColor
 	signLabel.TextSize = 16
 	signLabel.TextStrokeTransparency = 0.2
@@ -351,13 +356,16 @@ flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 end)
 
 ----------------------------------------------------------------------
--- 4. ECONOMÍA Y VALIDACIÓN SERVER-SIDE ANTI-EXPLOIT
+-- 4. ECONOMÍA Y VALIDACIÓN SERVER-SIDE ANTI-EXPLOIT (Fase 1: Amenazas & Rachas)
 ----------------------------------------------------------------------
 local lastDeliveryTime: { [number]: number } = {}
+local playerStreaks: { [number]: number } = {}
 local CURRENCY_NAME = "PELAOCOINS"  -- Moneda del juego
 local MIN_DELIVERY_INTERVAL = 2.0  -- Cooldown mínimo entre entregas por jugador
 
 Players.PlayerAdded:Connect(function(player)
+	playerStreaks[player.UserId] = 0
+
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
 	leaderstats.Parent = player
@@ -371,10 +379,21 @@ Players.PlayerAdded:Connect(function(player)
 	deliveries.Name = "Entregas"
 	deliveries.Value = 0
 	deliveries.Parent = leaderstats
+
+	player.CharacterAdded:Connect(function(char)
+		local hum = char:WaitForChild("Humanoid", 5) :: Humanoid?
+		if hum then
+			hum.Died:Connect(function()
+				playerStreaks[player.UserId] = 0
+				print(string.format("[Servidor] Personaje de %s murió: racha reiniciada a 0.", player.Name))
+			end)
+		end
+	end)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
 	lastDeliveryTime[player.UserId] = nil
+	playerStreaks[player.UserId] = nil
 end)
 
 -- Validación estricta en el servidor para otorgar recompensas
@@ -451,12 +470,36 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 
 	if credits and deliveries then
 		local isBase = (padName == "Pad_Base" or padName == "Base")
-		local reward = if isBase then 100 else 250
-		credits.Value += reward
-		if not isBase then
-			deliveries.Value += 1
+		local baseReward = 250
+		local threatColor = Color3.fromRGB(0, 240, 255)
+
+		if isBase then
+			baseReward = 100
+			threatColor = Color3.fromRGB(0, 240, 255)
+		elseif padName == "Pad_TorreB" then
+			baseReward = 400
+			threatColor = Color3.fromRGB(255, 30, 80)
+		elseif padName == "Pad_TorreA" then
+			baseReward = 250
+			threatColor = Color3.fromRGB(255, 180, 0)
 		end
-		print(string.format("[Servidor SEGURO] Operación validada en %s para %s (+%d %s)", padName, player.Name, reward, credits.Name))
+
+		local currentStreak = playerStreaks[player.UserId] or 0
+		local streakMultiplier = 1.0
+
+		if not isBase then
+			currentStreak += 1
+			playerStreaks[player.UserId] = currentStreak
+			deliveries.Value += 1
+			-- Bono de racha: +10% por entrega adicional hasta +50% máximo
+			streakMultiplier = 1.0 + math.clamp((currentStreak - 1) * 0.10, 0, 0.50)
+		end
+
+		local finalReward = math.round(baseReward * streakMultiplier)
+		credits.Value += finalReward
+
+		print(string.format("[Servidor SEGURO] Operación en %s para %s (+%d %s | Racha: x%d | Mult: x%.2f)",
+			padName, player.Name, finalReward, credits.Name, currentStreak, streakMultiplier))
 
 		-- Pulso de escaneo y verificación holográfica en la torre receptora
 		if not isBase and basePad then
@@ -465,7 +508,7 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 			scanRing.Size = Vector3.new(24, 0.4, 24)
 			scanRing.Position = basePad.Position + Vector3.new(0, 1.8, 0)
 			scanRing.Material = Enum.Material.Neon
-			scanRing.Color = Color3.fromRGB(0, 255, 180)
+			scanRing.Color = threatColor
 			scanRing.Transparency = 0.25
 			scanRing.CanCollide = false
 			scanRing.Anchored = true
@@ -481,7 +524,7 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any)
 		end
 
 		-- Confirmar al cliente para activar animaciones/HUD legítimas
-		deliveryConfirmedEvent:FireClient(player, padName, reward)
+		deliveryConfirmedEvent:FireClient(player, padName, finalReward, currentStreak, streakMultiplier)
 	else
 		warn(string.format("[Servidor] Error al premiar a %s: credits o deliveries no encontrados en leaderstats", player.Name))
 	end

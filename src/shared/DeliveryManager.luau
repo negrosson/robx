@@ -18,6 +18,8 @@ end)
 local DeliveryManager = {}
 DeliveryManager.__index = DeliveryManager
 
+export type ThreatLevel = "safe" | "hostile" | "black_ops"
+
 export type DeliveryTarget = {
 	name: string,
 	displayName: string,
@@ -25,6 +27,9 @@ export type DeliveryTarget = {
 	position: Vector3,
 	basePadPosition: Vector3,
 	reward: number,
+	threatLevel: ThreatLevel,
+	hazardInfo: string,
+	timeBonusSeconds: number?,
 }
 
 export type ManagerInstance = {
@@ -37,10 +42,13 @@ export type ManagerInstance = {
 	claimEvent: RemoteEvent?,
 	confirmedEvent: RemoteEvent?,
 	confirmedConn: RBXScriptConnection?,
-	onDeliveryCallback: ((reward: number, padName: string) -> ())?,
-	-- NUEVO: control de inventario de bodega de 3 paquetes
+	onDeliveryCallback: ((reward: number, padName: string, streak: number, multiplier: number) -> ())?,
+	-- Control de inventario de bodega de 3 paquetes
 	packagesRemaining: number,
 	maxPackages: number,
+	-- Fase 1: Sistema de Racha y Amenaza
+	deliveryStreak: number,
+	streakMultiplier: number,
 }
 
 -- Tolerancias de aterrizaje generosas para jugabilidad fluida
@@ -59,6 +67,25 @@ local function getPadDisplayName(padName: string): string
 		return "Torre B"
 	else
 		return padName:gsub("Pad_", ""):gsub("(%u)", " %1"):gsub("^%s+", "")
+	end
+end
+
+local function getPadThreat(padName: string, position: Vector3?): (ThreatLevel, string, number)
+	if padName == "Pad_Base" or padName == "Base" then
+		return "safe", "ZONA VERDE // REABASTECIMIENTO Y DESPACHO", 100
+	elseif padName == "Pad_TorreA" or padName == "Torre A" then
+		return "hostile", "SECTOR INDUSTRIAL // NIDO SCAV-GNATS", 250
+	elseif padName == "Pad_TorreB" or padName == "Torre B" then
+		return "black_ops", "ESPACIO RESTRINGIDO // CORREDOR KUROSHIO", 400
+	else
+		local y = if position then position.Y else 50
+		if y > 80 then
+			return "black_ops", "ALTA ALTITUD // ALERTA DEFENSIVA", 400
+		elseif y > 30 then
+			return "hostile", "ZONA HOSTIL // PATRULLAS PIRATAS", 250
+		else
+			return "safe", "ZONA SEGURA // VUELO NOMINAL", 150
+		end
 	end
 end
 
@@ -107,13 +134,17 @@ function DeliveryManager.new(): ManagerInstance
 				local basePart = child:FindFirstChild("BasePad") :: BasePart?
 				if basePart then
 					local displayName = getPadDisplayName(child.Name)
+					local threat, hazard, rwd = getPadThreat(child.Name, basePart.Position)
 					table.insert(targets, {
 						name = child.Name,
 						displayName = displayName,
 						model = child,
 						position = basePart.Position + Vector3.new(0, 3, 0),
 						basePadPosition = basePart.Position,
-						reward = 250,
+						reward = rwd,
+						threatLevel = threat,
+						hazardInfo = hazard,
+						timeBonusSeconds = if threat == "black_ops" then 90 else nil,
 					})
 				end
 			end
@@ -131,6 +162,9 @@ function DeliveryManager.new(): ManagerInstance
 			position = Vector3.new(0, 6, 0),
 			basePadPosition = Vector3.new(0, 4, 0),
 			reward = 100,
+			threatLevel = "safe",
+			hazardInfo = "ZONA VERDE // REABASTECIMIENTO Y DESPACHO",
+			timeBonusSeconds = nil,
 		})
 		table.insert(targets, {
 			name = "Pad_TorreA",
@@ -139,6 +173,9 @@ function DeliveryManager.new(): ManagerInstance
 			position = Vector3.new(160, 97, -180),
 			basePadPosition = Vector3.new(160, 95, -180),
 			reward = 250,
+			threatLevel = "hostile",
+			hazardInfo = "SECTOR INDUSTRIAL // NIDO SCAV-GNATS",
+			timeBonusSeconds = nil,
 		})
 		table.insert(targets, {
 			name = "Pad_TorreB",
@@ -146,7 +183,10 @@ function DeliveryManager.new(): ManagerInstance
 			model = nil,
 			position = Vector3.new(-200, 52, 140),
 			basePadPosition = Vector3.new(-200, 50, 140),
-			reward = 250,
+			reward = 400,
+			threatLevel = "black_ops",
+			hazardInfo = "ESPACIO RESTRINGIDO // CORREDOR KUROSHIO",
+			timeBonusSeconds = 90,
 		})
 	end
 
@@ -175,6 +215,8 @@ function DeliveryManager.new(): ManagerInstance
 		onDeliveryCallback = nil,
 		packagesRemaining = 3,
 		maxPackages = 3,
+		deliveryStreak = 0,
+		streakMultiplier = 1.0,
 	}
 
 	-- Auto-refrescar cuando se repliquen helipuertos del servidor
@@ -185,19 +227,32 @@ function DeliveryManager.new(): ManagerInstance
 		end)
 	end
 
-	local function onConfirmed(padName: string, reward: number)
+	local function onConfirmed(padName: string, reward: number, serverStreak: any, serverMultiplier: any)
 		print(string.format("[DeliveryManager] ¡Servidor confirmó operación en %s! (+%d ₵)", padName, reward))
 		self.originPadName = padName
 
 		local isBase = (padName == "Pad_Base" or padName == "Base")
 		if isBase then
-			-- Reabastecimiento completo en Base
+			-- Reabastecimiento completo en Base (la racha no se reinicia al recargar)
 			self.packagesRemaining = self.maxPackages
-			print("[DeliveryManager] ¡Bodega reabastecida al 100%! 3 paquetes disponibles.")
+			print(string.format("[DeliveryManager] ¡Bodega reabastecida al 100%! 3 paquetes disponibles. Racha actual: x%d", self.deliveryStreak))
 		else
 			-- Entrega normal en una torre
 			self.packagesRemaining = math.max(0, self.packagesRemaining - 1)
-			print(string.format("[DeliveryManager] Paquete entregado. Quedan %d/%d.", self.packagesRemaining, self.maxPackages))
+			if typeof(serverStreak) == "number" then
+				self.deliveryStreak = serverStreak
+			else
+				self.deliveryStreak += 1
+			end
+
+			if typeof(serverMultiplier) == "number" then
+				self.streakMultiplier = serverMultiplier
+			else
+				self.streakMultiplier = 1.0 + math.clamp((self.deliveryStreak - 1) * 0.10, 0, 0.50)
+			end
+
+			print(string.format("[DeliveryManager] Paquete entregado. Quedan %d/%d. ¡Racha: x%d (+%.0f%%)!",
+				self.packagesRemaining, self.maxPackages, self.deliveryStreak, (self.streakMultiplier - 1) * 100))
 		end
 
 		local displayName = getPadDisplayName(padName)
@@ -209,7 +264,7 @@ function DeliveryManager.new(): ManagerInstance
 		end
 
 		if self.onDeliveryCallback then
-			self.onDeliveryCallback(reward, displayName)
+			self.onDeliveryCallback(reward, displayName, self.deliveryStreak, self.streakMultiplier)
 		end
 
 		-- Asignar el siguiente destino según la carga restante
@@ -256,7 +311,7 @@ function DeliveryManager.RefreshTargets(self: ManagerInstance)
 			local basePart = child:FindFirstChild("BasePad") :: BasePart?
 			if basePart then
 				local displayName = getPadDisplayName(child.Name)
-				local rwd = if child.Name == "Pad_Base" then 100 else 250
+				local threat, hazard, rwd = getPadThreat(child.Name, basePart.Position)
 				table.insert(newTargets, {
 					name = child.Name,
 					displayName = displayName,
@@ -264,6 +319,9 @@ function DeliveryManager.RefreshTargets(self: ManagerInstance)
 					position = basePart.Position + Vector3.new(0, 3, 0),
 					basePadPosition = basePart.Position,
 					reward = rwd,
+					threatLevel = threat,
+					hazardInfo = hazard,
+					timeBonusSeconds = if threat == "black_ops" then 90 else nil,
 				})
 			end
 		end
@@ -291,6 +349,9 @@ function DeliveryManager.GetCurrentTarget(self: ManagerInstance): DeliveryTarget
 					position = tgt.position,
 					basePadPosition = tgt.basePadPosition,
 					reward = 100, -- Bono por completar la ruta
+					threatLevel = "safe",
+					hazardInfo = "BODEGA VACÍA // REGRESO A BASE REQUERIDO",
+					timeBonusSeconds = nil,
 				}
 			end
 		end
@@ -479,7 +540,23 @@ function DeliveryManager.GetMaxPackages(self: ManagerInstance): number
 	return self.maxPackages
 end
 
-function DeliveryManager.SetOnDeliveryCallback(self: ManagerInstance, callback: (reward: number, padName: string) -> ())
+function DeliveryManager.GetDeliveryStreak(self: ManagerInstance): number
+	return self.deliveryStreak
+end
+
+function DeliveryManager.GetStreakMultiplier(self: ManagerInstance): number
+	return self.streakMultiplier
+end
+
+function DeliveryManager.ResetStreak(self: ManagerInstance)
+	self.deliveryStreak = 0
+	self.streakMultiplier = 1.0
+end
+
+function DeliveryManager.SetOnDeliveryCallback(
+	self: ManagerInstance,
+	callback: (reward: number, padName: string, streak: number, multiplier: number) -> ()
+)
 	self.onDeliveryCallback = callback
 end
 

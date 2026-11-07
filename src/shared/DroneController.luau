@@ -297,21 +297,29 @@ end
 
 function DroneController:SetupDeliveryCallback()
 	if not self.deliveryManager or not (self.deliveryManager :: any).SetOnDeliveryCallback then return end
-	(self.deliveryManager :: any):SetOnDeliveryCallback(function(reward: number, padName: string)
+	(self.deliveryManager :: any):SetOnDeliveryCallback(function(reward: number, padName: string, streak: number?, multiplier: number?)
 		local isBase = (padName == "Base" or padName == "Pad_Base" or string.find(padName, "Base") ~= nil)
 		local remaining = 0
 		if isBase then
 			if self.cargo and (self.cargo :: any).RestockAtBase then
 				_, remaining = (self.cargo :: any):RestockAtBase()
 			end
-			if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, "BASE CENTRAL", remaining, true) end) end
+			if self.hud then
+				pcall(function()
+					self.hud:ShowSuccessPopup(reward, "BASE CENTRAL", remaining, true, streak, multiplier)
+				end)
+			end
 		else
 			if self.cargo and (self.cargo :: any).DeliverOnePackage then
 				_, remaining = (self.cargo :: any):DeliverOnePackage(self.rootPart.Position)
 			elseif self.cargo then
 				pcall(function() self.cargo:DeliverAndReload(self.rootPart.Position) end)
 			end
-			if self.hud then pcall(function() self.hud:ShowSuccessPopup(reward, padName, remaining, false) end) end
+			if self.hud then
+				pcall(function()
+					self.hud:ShowSuccessPopup(reward, padName, remaining, false, streak, multiplier)
+				end)
+			end
 		end
 	end)
 end
@@ -363,11 +371,14 @@ function DroneController:StartFlying()
 		pcall(function() self.cyberGoggles.SetOnline(char, true) end)
 	end
 
-	-- Auto-detener vuelo si el personaje muere
+	-- Auto-detener vuelo si el personaje muere y reiniciar racha
 	if char then
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then
 			self.charDiedConn = hum.Died:Connect(function()
+				if self.deliveryManager and (self.deliveryManager :: any).ResetStreak then
+					pcall(function() (self.deliveryManager :: any):ResetStreak() end)
+				end
 				self:StopFlying()
 			end)
 		end
@@ -570,6 +581,9 @@ function DroneController:StartFlying()
 			self.cargoSpeedMult = (self.cargo :: any):GetSpeedMultiplier()
 		end
 
+		local streakCount = if self.deliveryManager and (self.deliveryManager :: any).GetDeliveryStreak then (self.deliveryManager :: any):GetDeliveryStreak() else 0
+		local streakMult = if self.deliveryManager and (self.deliveryManager :: any).GetStreakMultiplier then (self.deliveryManager :: any):GetStreakMultiplier() else 1.0
+
 		-- HUD
 		if self.hud then
 			pcall(function()
@@ -586,7 +600,11 @@ function DroneController:StartFlying()
 					currentTarget and currentTarget.reward or 250,
 					landingProgress,
 					cargoCount,
-					maxCargo
+					maxCargo,
+					currentTarget and currentTarget.threatLevel or "safe",
+					currentTarget and currentTarget.hazardInfo or "ZONA NOMINAL",
+					streakCount,
+					streakMult
 				)
 			end)
 		end

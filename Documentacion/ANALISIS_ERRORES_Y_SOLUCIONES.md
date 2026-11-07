@@ -387,5 +387,35 @@ Al modificar el nombre de la recompensa/moneda en `src/server/Main.server.luau` 
    * Los popups de victoria muestran la carga restante en tiempo real y notifican el reabastecimiento en Base.
 
 ---
+
+## 15. Fase 1 Enriquecida: Red de Rutas con Niveles de Amenaza, Despacho Táctico y Multiplicador de Rachas (Delivery Streak)
+
+### 🔍 1. Diagnóstico y Visión de Juego
+* **Rutas Homogéneas:** Anteriormente, todas las torres otorgaban la misma recompensa (250) sin importar la distancia, la altitud ni la presencia inminente de hostiles.
+* **Falta de Tensión y Progresión en Vuelo:** No existía incentivo para encadenar entregas limpias ni diferenciación visual del peligro entre sectores del mapa.
+
+### 🛠️ 2. Solución de Ingeniería Implementada (Fase 1)
+1. **Tipologías y Niveles de Amenaza (`ThreatLevel`):**
+   * Se definió el tipo estricto `export type ThreatLevel = "safe" | "hostile" | "black_ops"` en `DeliveryManager.luau`.
+   * **Zona Segura (🟢 `safe` - Base Central):** Vuelo de despacho y reabastecimiento logístico (+100 PELAOCOINS).
+   * **Sector Hostil (🟡 `hostile` - Torre A):** Vuelo a media distancia sobre zona de chatarreros (+250 PELAOCOINS).
+   * **Ruta Crítica / Black Ops (🔴 `black_ops` - Torre B):** Alta altitud y larga distancia, corredor de caza Kuroshio (+400 PELAOCOINS base).
+2. **Sistema Server-Authoritative de Rachas ("Delivery Streak"):**
+   * Implementado en `Main.server.luau`: el servidor lleva un registro estricto `playerStreaks[player.UserId]`.
+   * Cada entrega exitosa a una torre incrementa la racha en `+1`.
+   * **Multiplicador de Recompensa:** `1.0 + math.clamp((streak - 1) * 0.10, 0, 0.50)` otorgando hasta un **+50% adicional** en PELAOCOINS por encadenar rutas exitosas.
+   * **Preservación en Base:** Reabastecer paquetes en la Base Central preserva la racha acumulada para que el jugador continúe su cadena de envíos.
+   * **Penalización por Muerte:** Si el personaje muere o el dron es destruido, la racha se reinicia automáticamente a 0 tanto en el servidor como en el cliente.
+3. **Telemetría y Cabina Táctica HUD (`DroneHUD.luau`):**
+   * Panel de Misión ampliado con **Threat Badge** estilizado (`[🟢 SEGURO]`, `[🟡 HOSTIL]`, `[🔴 BLACK OPS]`) con bordes neón y color temático.
+   * Campo de inteligencia táctica (`INTEL: Sector industrial // Nido Scav-Gnats`).
+   * **Indicador de Racha Activa:** `RACHA: x3 🔥 (+20% BONUS)`.
+   * **Waypoint 3D Dinámico:** El diamante y la etiqueta holográfica en pantalla cambian automáticamente de color según la amenaza del helipuerto objetivo (Cian para seguro, Amarillo para hostil, Neón Rosa para Black Ops).
+   * Popups de victoria actualizados para celebrar la racha alcanzada.
+4. **Hologramas 3D en el Mundo (`Main.server.luau`):**
+   * Los letreros holográficos sobre los helipuertos (`PadHoloSign`) ahora proyectan en 3D el nivel de amenaza y la recompensa asociada, visibles hasta a 1000 studs.
+
+---
 *Fin del documento de auditoría técnica.*
+
 
