@@ -1119,11 +1119,11 @@ function DroneHUD.Update(
 	self.radarSweep.Rotation = (self.radarSweep.Rotation + delta * 180) % 360
 
 	if playerDronePos and playerDroneYaw then
-		-- Helipuertos conocidos
+		-- Helipuertos conocidos (calibrados con las coordenadas reales del mapa)
 		local helipads = {
-			Base   = Vector3.new(0, 0, 0),
-			TorreA = Vector3.new(0, 100, 320),
-			TorreB = Vector3.new(-280, 160, -180),
+			Base   = Vector3.new(0, 4, 0),
+			TorreA = Vector3.new(160, 95, -180),
+			TorreB = Vector3.new(-200, 50, 140),
 		}
 
 		for padName, padPos in pairs(helipads) do
@@ -1149,12 +1149,12 @@ function DroneHUD.Update(
 			end
 		end
 
-		-- Enemigos hostiles en Workspace.EnemyDrones
+		-- Enemigos hostiles en Workspace.EnemyDrones (filtrando accesorios)
 		local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
 		local enemyParts: { BasePart } = {}
 		if enemyFolder then
 			for _, child in ipairs(enemyFolder:GetChildren()) do
-				if child:IsA("BasePart") then
+				if child:IsA("BasePart") and child.Name ~= "AccentBand" and child.Name ~= "LaserSight" then
 					table.insert(enemyParts, child)
 				end
 			end

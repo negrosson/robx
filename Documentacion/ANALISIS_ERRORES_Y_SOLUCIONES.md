@@ -533,7 +533,48 @@ La Fase 5 concluye el Plan Maestro cerrando el ciclo de juego (game loop) con te
    * Disparador en `ApplyDamage`: detección de impacto crítico con cooldown de 4s para prevenir desprendimiento instantáneo de todos los paquetes ante ráfagas múltiples.
 
 ---
-*Fin del documento de auditoría técnica del Plan Maestro de 5 Fases.*
+
+## 20. Auditoría y Corrección de Visibilidad, Físicas y Patrulla de IA Hostil
+
+### Diagnóstico de Causas de No-Visibilidad
+Una auditoría exhaustiva reveló las causas por las cuales las unidades enemigas no eran visibles en el mundo de juego:
+1. **Caída Gravitatoria al Vacío (Física Crítica):**
+   * Las unidades móviles (`scav_gnats` y `kuroshio_v`) se instanciaban con `Anchored = false` pero con un `LinearVelocity.MaxForce` restrictivo ($spec.maxForce \times spec.mass = 900$ y $3,600$ N).
+   * La masa real de los bloques metálicos en Roblox oscilaba entre $53$ kg y $716$ kg, lo que generaba un peso gravitatorio de $10,400$ N a $140,500$ N ($P = m \cdot g$).
+   * Con una fuerza vertical incapaz de soportar el 10% del peso, las unidades se precipitaban en caída libre vertical a $\sim 180\text{ studs/s}^2$, estrellándose contra el suelo en $< 0.8$ segundos y muriendo en el vacío (`FallenPartsDestroyHeight` a $-500$) o quedando encalladas en el suelo $100$ studs por debajo del vuelo del jugador.
+2. **Inactividad en Reposo y Desconexión de Rango:**
+   * La zona se activaba a $220$ studs, pero `scav_gnats` tenía `detectionRadius = 90` studs.
+   * Sin un objetivo a $< 90$ studs, la IA calculaba `steerForce = Vector3.zero` sin ninguna conducta de patrulla, dejándolas inertes.
+3. **Descalibración del Radar en el HUD:**
+   * Las coordenadas del radar para Torre A y Torre B estaban desfasadas (`(0, 100, 320)` y `(-280, 160, -180)` vs coordenadas reales `(160, 95, -180)` y `(-200, 50, 140)`), guiando al piloto en dirección contraria a los sectores con enemigos.
+4. **Posicionamiento Errático de la Torreta Aegis-44:**
+   * Spawneaba a $Y = 72$ (flotando 22 studs en el aire sin cornisa física sobre la azotea de Torre B a $Y = 50$), mirando hacia el sur en un cono ciego de 120° que ignoraba al jugador que se aproximaba desde la Base.
+5. **Baja Salencia Visual y Rótulo Corto:**
+   * Bloques metálicos oscuros sin silueta ni estela propulsora en un cielo nocturno, con un `BillboardGui` limitado a solo 180 studs de distancia.
+
+### Solución Quirúrgica Aplicada
+1. **Sustentación Anti-Gravedad Robusta (`EnemyAIService.server.luau`):**
+   * Asignación de `lv.MaxForce = 1e6` (1,000,000 N) y `ao.MaxTorque = 1e6` idéntico a `TestDrone`, otorgando autoridad total sobre la gravedad y aceleración 3D fluida.
+   * Asignación de `CustomPhysicalProperties = PhysicalProperties.new(0.01, 0, 0, 0, 0)` y `pcall(function() part:SetNetworkOwner(nil) end)` garantizando simulación en el servidor sin desincronización de red.
+2. **Patrulla Activa en Reposo (*Idle Swarm & High Patrol*):**
+   * Si el jugador aún no está al alcance directo, los Scav-Gnats patrullan activamente en enjambre orbitando Torre A con oscilación vertical sinusoidal visible desde gran distancia.
+   * El interceptor Kuroshio-V patrulla en órbita alta a $Y = 80$ studs alrededor de Torre B.
+   * La torreta Aegis-44 ejecuta un barrido rotativo de vigilancia de 360° con un haz láser diegético rojo (`LaserSight`).
+3. **Ampliación de Detección Omnidireccional (`EnemyTypes.luau`):**
+   * Scav-Gnats: `detectionRadius = 240` studs.
+   * Aegis-44: `detectionRadius = 240` studs, `detectionAngle = 360` grados.
+   * Kuroshio-V: `detectionRadius = 260` studs.
+4. **Visibilidad Táctica Neón:**
+   * Integración de componente `Highlight` neón (`OutlineColor = spec.accentColor`, `FillTransparency = 0.65`) en todos los enemigos.
+   * Emisores de partículas de propulsión (`ParticleEmitter`) en toberas de escape.
+   * `BillboardGui` diegético visible hasta **600 studs** de distancia con rótulos nítidos `[▼ SCAV-GNAT MK0 ▼]`.
+5. **Calibración del Radar y Torre B:**
+   * Helipuertos en `DroneHUD.luau` alineados a las coordenadas reales del mundo.
+   * Filtrado de accesorios en el radar (`AccentBand`, `LaserSight`) para evitar blips fantasma.
+   * Montaje de Aegis-44 asentada firmemente sobre la cornisa de Torre B a $Y = 52.5$ studs.
+
+---
+*Fin del documento de auditoría técnica del Plan Maestro y Sistema de Hostilidad.*
 
 
 

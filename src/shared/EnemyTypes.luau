@@ -70,7 +70,7 @@ local SCAV_GNATS: EnemySpec = {
 	maxSpeed        = 50,
 	maxForce        = 300,
 	mass            = 3,       -- ligeros, fáciles de destruir pero agiles
-	detectionRadius = 90,
+	detectionRadius = 240,     -- detecta al jugador tan pronto entra al sector
 	detectionAngle  = 360,     -- omnidireccional (enjambre sin puntos ciegos)
 
 	orbitRadius     = 0,       -- no orbitan, embisten
@@ -103,12 +103,12 @@ local AEGIS_44: EnemySpec = {
 	maxSpeed        = 0,     -- estacionaria, no se mueve
 	maxForce        = 0,
 	mass            = 60,
-	detectionRadius = 160,
-	detectionAngle  = 120,   -- cono frontal de 120°
+	detectionRadius = 240,   -- escaneo de sector amplio
+	detectionAngle  = 360,   -- barrido omnidireccional 360°
 
 	orbitRadius     = 0,
 	rammingImpulse  = 0,
-	fireRange       = 150,
+	fireRange       = 180,
 	burstWeapon     = "rail_driver",
 
 	creditReward    = 80,
@@ -136,7 +136,7 @@ local KUROSHIO_V: EnemySpec = {
 	maxSpeed        = 70,
 	maxForce        = 450,
 	mass            = 8,
-	detectionRadius = 200,
+	detectionRadius = 260,   -- radar de largo alcance
 	detectionAngle  = 360,     -- sensores omnidireccionales
 
 	orbitRadius     = 100,     -- mantiene 100 studs de distancia orbital

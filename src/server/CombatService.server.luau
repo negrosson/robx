@@ -47,27 +47,8 @@ type DroneState = {
 local activeDrones: { [BasePart]: DroneState } = {}
 
 ----------------------------------------------------------------------
--- RemoteEvents (via NetworkEvents o búsqueda directa)
+-- RemoteEvents (Garantizados de forma inmediata y segura)
 ----------------------------------------------------------------------
-local function getRemote(name: string): RemoteEvent
-	local ev = ReplicatedStorage:FindFirstChild(name) :: RemoteEvent?
-	if not ev then
-		ev = ReplicatedStorage:WaitForChild(name, 5) :: RemoteEvent?
-	end
-	assert(ev, "[CombatService] RemoteEvent no encontrado: " .. name)
-	return ev
-end
-
--- Cliente → Servidor: Solicitar disparo validado
-local onFireWeaponEvent     = getRemote("OnFireWeapon")
--- Servidor → Cliente: Notificar daño recibido (HUD)
-local onDamagedEvent        = getRemote("OnDamageTaken")
--- Servidor → Cliente: Notificar estado EMP
-local onEMPEvent            = getRemote("OnEMPActivated")
--- Servidor → Cliente: Actualizar datos de calor para HUD
-local onHeatUpdateEvent     = getRemote("OnHeatUpdate")
-
--- Crear eventos si no existen
 local function ensureRemote(name: string): RemoteEvent
 	local ev = ReplicatedStorage:FindFirstChild(name) :: RemoteEvent?
 	if not ev then
@@ -77,11 +58,17 @@ local function ensureRemote(name: string): RemoteEvent
 	end
 	return ev :: RemoteEvent
 end
-ensureRemote("OnFireWeapon")
-ensureRemote("OnDamageTaken")
-ensureRemote("OnEMPActivated")
-ensureRemote("OnHeatUpdate")
-local onBountyEvent = ensureRemote("OnBountyAwarded")
+
+-- Cliente → Servidor: Solicitar disparo validado
+local onFireWeaponEvent     = ensureRemote("OnFireWeapon")
+-- Servidor → Cliente: Notificar daño recibido (HUD)
+local onDamagedEvent        = ensureRemote("OnDamageTaken")
+-- Servidor → Cliente: Notificar estado EMP
+local onEMPEvent            = ensureRemote("OnEMPActivated")
+-- Servidor → Cliente: Actualizar datos de calor para HUD
+local onHeatUpdateEvent     = ensureRemote("OnHeatUpdate")
+-- Servidor → Cliente: Recompensa de caza
+local onBountyEvent         = ensureRemote("OnBountyAwarded")
 
 ----------------------------------------------------------------------
 -- API PÚBLICA — Registrar un dron en el sistema de combate

@@ -41,6 +41,7 @@ type EnemyAgent = {
 	isAlive       : boolean,
 	linearVelocity: LinearVelocity,
 	alignOrient   : AlignOrientation,
+	homeCenter    : Vector3?,     -- punto de patrulla en reposo
 }
 
 local activeAgents: { [BasePart]: EnemyAgent } = {}
@@ -73,11 +74,19 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	part.Material     = Enum.Material.Metal
 	part.Color        = spec.primaryColor
 	part.Anchored     = isTurret
-	part.CanCollide   = true
+	part.CanCollide   = false             -- Evita atascos de colisión física con edificios o drones
+	part.CustomPhysicalProperties = PhysicalProperties.new(0.01, 0, 0, 0, 0) -- Densidad ultra-ligera
 	part.CFrame       = spawnCF
 	part.Parent       = agentFolder
 
-	-- Banda de acento neón
+	-- Control autoritativo estricto del servidor para físicas de NPC
+	if not isTurret then
+		pcall(function()
+			part:SetNetworkOwner(nil)
+		end)
+	end
+
+	-- Banda de acento neón (embebida directamente como hija para no duplicar blips en el radar)
 	local band = Instance.new("Part")
 	band.Name       = "AccentBand"
 	band.Size       = Vector3.new(part.Size.X * 0.95, 0.3, part.Size.Z * 0.95)
@@ -86,7 +95,7 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	band.CanCollide = false
 	band.Massless   = true
 	band.CFrame     = part.CFrame
-	band.Parent     = agentFolder  -- mismo nivel (se suelda a part)
+	band.Parent     = part
 
 	local weld = Instance.new("WeldConstraint")
 	weld.Part0  = part
@@ -98,23 +107,23 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	att.Name   = "AIAtt"
 	att.Parent = part
 
-	-- LinearVelocity (solo para drones móviles, torreta es estacionaria)
+	-- LinearVelocity con fuerza de sustentación completa (1e6 Newtons, inmune a caída por gravedad)
 	local lv = Instance.new("LinearVelocity")
 	lv.Name           = "FlightVelocity"
 	lv.Attachment0    = att
 	lv.RelativeTo     = Enum.ActuatorRelativeTo.World
-	lv.MaxForce       = if isTurret then 0 else (spec.maxForce * spec.mass)
+	lv.MaxForce       = if isTurret then 0 else 1e6
 	lv.VectorVelocity = Vector3.zero
 	lv.Enabled        = not isTurret
 	lv.Parent         = part
 
-	-- AlignOrientation (giroscopio para unidades aéreas)
+	-- AlignOrientation (giroscopio para unidades aéreas con torque de 1e6)
 	local ao = Instance.new("AlignOrientation")
 	ao.Name           = "FlightOrientation"
 	ao.Attachment0    = att
 	ao.Mode           = Enum.OrientationAlignmentMode.OneAttachment
-	ao.Responsiveness = 20
-	ao.MaxTorque      = if isTurret then 0 else 1e5
+	ao.Responsiveness = 25
+	ao.MaxTorque      = if isTurret then 0 else 1e6
 	ao.CFrame         = part.CFrame
 	ao.Enabled        = not isTurret
 	ao.Parent         = part
@@ -122,27 +131,75 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	-- Punto de luz del acento
 	local pl = Instance.new("PointLight")
 	pl.Color      = spec.accentColor
-	pl.Brightness = 2.5
-	pl.Range      = 16
+	pl.Brightness = 3.5
+	pl.Range      = 22
 	pl.Parent     = part
 
-	-- Rótulo holográfico diegético de hostilidad
+	-- Silueta Highlight neón diegética para visibilidad impecable a larga distancia
+	local hl = Instance.new("Highlight")
+	hl.Name = "EnemyHighlight"
+	hl.Adornee = part
+	hl.FillColor = spec.accentColor
+	hl.FillTransparency = 0.65
+	hl.OutlineColor = spec.accentColor
+	hl.OutlineTransparency = 0.05
+	hl.Parent = part
+
+	-- Efectos específicos por arquetipo
+	if not isTurret then
+		-- Estela de propulsión para drones móviles
+		local thrusterAtt = Instance.new("Attachment")
+		thrusterAtt.Name = "ThrusterAtt"
+		thrusterAtt.Position = Vector3.new(0, 0, part.Size.Z * 0.45)
+		thrusterAtt.Parent = part
+
+		local pe = Instance.new("ParticleEmitter")
+		pe.Name = "ThrusterTrail"
+		pe.Rate = 25
+		pe.Lifetime = NumberRange.new(0.2, 0.4)
+		pe.Speed = NumberRange.new(5, 12)
+		pe.Color = ColorSequence.new(spec.accentColor)
+		pe.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.8),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		pe.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		pe.LightEmission = 1
+		pe.Parent = thrusterAtt
+	else
+		-- Haz láser de escaneo para la torreta Aegis-44
+		local laserBeam = Instance.new("Part")
+		laserBeam.Name = "LaserSight"
+		laserBeam.Size = Vector3.new(0.2, 0.2, 60)
+		laserBeam.Material = Enum.Material.Neon
+		laserBeam.Color = spec.accentColor
+		laserBeam.Transparency = 0.4
+		laserBeam.CanCollide = false
+		laserBeam.Anchored = true
+		laserBeam.CFrame = part.CFrame * CFrame.new(0, 0, -30)
+		laserBeam.Parent = part
+	end
+
+	-- Rótulo holográfico diegético de hostilidad visible hasta 600 studs
 	local tagGui = Instance.new("BillboardGui")
 	tagGui.Name        = "EnemyTag"
-	tagGui.Size        = UDim2.fromOffset(140, 22)
-	tagGui.StudsOffset = Vector3.new(0, part.Size.Y + 1.2, 0)
+	tagGui.Size        = UDim2.fromOffset(180, 26)
+	tagGui.StudsOffset = Vector3.new(0, part.Size.Y + 1.8, 0)
 	tagGui.AlwaysOnTop = true
-	tagGui.MaxDistance = 180
+	tagGui.MaxDistance = 600
 	tagGui.Parent      = part
 
 	local tagText = Instance.new("TextLabel")
 	tagText.Size                   = UDim2.fromScale(1, 1)
 	tagText.BackgroundTransparency = 1
 	tagText.Font                   = Enum.Font.Code
-	tagText.Text                   = string.format("▼ %s ▼", spec.name:upper())
+	tagText.Text                   = string.format("▼ [%s] ▼", spec.name:upper())
 	tagText.TextColor3             = spec.accentColor
-	tagText.TextSize               = 10
-	tagText.TextStrokeTransparency = 0.3
+	tagText.TextSize               = 11
+	tagText.TextStrokeTransparency = 0.2
 	tagText.Parent                 = tagGui
 
 	return part
@@ -252,6 +309,7 @@ function EnemyAIService_Spawn(specId: string, spawnPosition: Vector3, difficulty
 		isAlive       = true,
 		linearVelocity = lv,
 		alignOrient    = ao,
+		homeCenter     = spawnPosition,
 	}
 
 	activeAgents[part] = agent
@@ -443,15 +501,27 @@ RunService.Heartbeat:Connect(function(dt: number)
 		local steerForce = Vector3.zero
 		local mode = agent.spec.aggressionMode
 
-		if mode == "ramming" and agent.targetPart then
-			-- Seek hacia el dron + separación del enjambre (flocking)
-			local seekV = seek(part.Position, agent.targetPart.Position, agent.spec.maxSpeed)
-			local sepV  = separation(part.Position, gnatParts, 8) * SEPARATION_WEIGHT
-			steerForce  = seekV + sepV
-			handleRamming(agent)
+		if mode == "ramming" then
+			if agent.targetPart then
+				-- Seek agresivo hacia el dron del jugador + separación enjambre (flocking)
+				local seekV = seek(part.Position, agent.targetPart.Position, agent.spec.maxSpeed)
+				local sepV  = separation(part.Position, gnatParts, 8) * SEPARATION_WEIGHT
+				steerForce  = seekV + sepV
+				handleRamming(agent)
+			else
+				-- Patrulla activa en reposo: vuelo orbital y oscilación vertical en enjambre
+				agent.orbitAngle += AI_TICK_RATE * 0.9
+				local home = agent.homeCenter or part.Position
+				local patrolTarget = home + Vector3.new(
+					math.cos(agent.orbitAngle) * 32,
+					math.sin(agent.orbitAngle * 1.8) * 8,
+					math.sin(agent.orbitAngle) * 32
+				)
+				local sepV = separation(part.Position, gnatParts, 10) * SEPARATION_WEIGHT
+				steerForce = arrive(part.Position, patrolTarget, 28, 15) + sepV
+			end
 
 		elseif mode == "turret" then
-			-- Estacionaria: rota CFrame hacia el objetivo suavemente
 			if agent.targetPart then
 				local toTarget = (agent.targetPart.Position - part.Position)
 				if toTarget.Magnitude > 0 then
@@ -459,21 +529,41 @@ RunService.Heartbeat:Connect(function(dt: number)
 					part.CFrame = part.CFrame:Lerp(targetCF, 0.20)
 				end
 				handleFiring(agent)
+			else
+				-- Barrido rotativo suave de vigilancia de 360° en reposo
+				part.CFrame = part.CFrame * CFrame.Angles(0, math.rad(AI_TICK_RATE * 35), 0)
 			end
-			-- No aplica fuerza de movimiento (estacionaria)
+
+			-- Sincronizar haz láser de la torreta
+			local laserSight = part:FindFirstChild("LaserSight") :: BasePart?
+			if laserSight then
+				laserSight.CFrame = part.CFrame * CFrame.new(0, 0, -30)
+			end
 			steerForce = Vector3.zero
 
-		elseif mode == "orbit" and agent.targetPart then
-			-- Órbita lateral tangencial
-			agent.orbitAngle += AI_TICK_RATE * 0.6  -- avanza en órbita
-			steerForce = orbitTangent(
-				part.Position,
-				agent.targetPart.Position,
-				agent.spec.orbitRadius,
-				agent.orbitAngle,
-				agent.spec.maxSpeed
-			)
-			handleFiring(agent)
+		elseif mode == "orbit" then
+			if agent.targetPart then
+				-- Órbita lateral agresiva alrededor del jugador atacando con microondas
+				agent.orbitAngle += AI_TICK_RATE * 0.7
+				steerForce = orbitTangent(
+					part.Position,
+					agent.targetPart.Position,
+					agent.spec.orbitRadius,
+					agent.orbitAngle,
+					agent.spec.maxSpeed
+				)
+				handleFiring(agent)
+			else
+				-- Patrulla de gran altitud en órbita alrededor de su punto base
+				agent.orbitAngle += AI_TICK_RATE * 0.5
+				local home = agent.homeCenter or part.Position
+				local patrolTarget = home + Vector3.new(
+					math.cos(agent.orbitAngle) * 50,
+					math.sin(agent.orbitAngle) * 6,
+					math.sin(agent.orbitAngle) * 50
+				)
+				steerForce = arrive(part.Position, patrolTarget, 38, 20)
+			end
 		end
 
 		-- ---- APLICAR VELOCIDAD VÍA LinearVelocity ----
@@ -533,9 +623,10 @@ local threatZones: { [string]: ThreatZone } = {
 		respawnCooldown = 35,
 		lastClearedTime = 0,
 		archetypes = {
-			{ specId = "scav_gnats", offset = Vector3.new(-25, -20, 25), difficulty = 0.1 },
-			{ specId = "scav_gnats", offset = Vector3.new(25, -10, -20),  difficulty = 0.15 },
-			{ specId = "scav_gnats", offset = Vector3.new(0, -30, 30),    difficulty = 0.2 },
+			-- Enjambre Scav-Gnats sobrevolando y patrullando la azotea de Torre A
+			{ specId = "scav_gnats", offset = Vector3.new(-25, 5, 25), difficulty = 0.1 },
+			{ specId = "scav_gnats", offset = Vector3.new(25, 10, -20), difficulty = 0.15 },
+			{ specId = "scav_gnats", offset = Vector3.new(0, 0, 30),    difficulty = 0.2 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -550,10 +641,10 @@ local threatZones: { [string]: ThreatZone } = {
 		respawnCooldown = 45,
 		lastClearedTime = 0,
 		archetypes = {
-			-- Torreta Aegis montada en cornisa elevada cercana a la torre
-			{ specId = "aegis_44",  offset = Vector3.new(20, 22, -20), difficulty = 0.25 },
-			-- Interceptor orbital Kuroshio patrullando a gran altitud
-			{ specId = "kuroshio_v", offset = Vector3.new(-10, 45, 10), difficulty = 0.35 },
+			-- Torreta Aegis asentada firmemente sobre la cornisa de la azotea de Torre B (Y = 52.5)
+			{ specId = "aegis_44",  offset = Vector3.new(14, 2.5, 14), difficulty = 0.25 },
+			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 80)
+			{ specId = "kuroshio_v", offset = Vector3.new(-15, 30, 15), difficulty = 0.35 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -622,8 +713,8 @@ task.spawn(function()
 		local dronePos = dronePart.Position
 		local distToBase = (dronePos - Vector3.new(0, 4, 0)).Magnitude
 
-		-- 1. Si no está volando o está en la Base Central (< 90 studs), Zona Segura Absoluta
-		if not isFlying or distToBase < 90 then
+		-- 1. Si no está volando o está en la Base Central (< 65 studs), Zona Segura Absoluta
+		if not isFlying or distToBase < 65 then
 			for _, zone in pairs(threatZones) do
 				if zone.isActive then
 					deactivateZone(zone)
