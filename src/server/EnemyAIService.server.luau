@@ -65,12 +65,14 @@ agentFolder = initFolder()
 -- CONSTRUCCIÓN DE MODELO 3D DE ENEMIGO
 ----------------------------------------------------------------------
 local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
+	local isTurret = (spec.aggressionMode == "turret")
+
 	local part = Instance.new("Part")
 	part.Name         = spec.id .. "_" .. tostring(math.random(1000, 9999))
 	part.Size         = spec.scale * 4.5  -- escala relativa al TestDrone estándar (4.5)
 	part.Material     = Enum.Material.Metal
 	part.Color        = spec.primaryColor
-	part.Anchored     = false
+	part.Anchored     = isTurret
 	part.CanCollide   = true
 	part.CFrame       = spawnCF
 	part.Parent       = agentFolder
@@ -96,31 +98,52 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	att.Name   = "AIAtt"
 	att.Parent = part
 
-	-- LinearVelocity (único motor de movimiento, NO BodyVelocity)
+	-- LinearVelocity (solo para drones móviles, torreta es estacionaria)
 	local lv = Instance.new("LinearVelocity")
 	lv.Name           = "FlightVelocity"
 	lv.Attachment0    = att
 	lv.RelativeTo     = Enum.ActuatorRelativeTo.World
-	lv.MaxForce       = spec.maxForce * spec.mass
+	lv.MaxForce       = if isTurret then 0 else (spec.maxForce * spec.mass)
 	lv.VectorVelocity = Vector3.zero
+	lv.Enabled        = not isTurret
 	lv.Parent         = part
 
-	-- AlignOrientation (giroscopio — sin BodyGyro)
+	-- AlignOrientation (giroscopio para unidades aéreas)
 	local ao = Instance.new("AlignOrientation")
-	ao.Name          = "FlightOrientation"
-	ao.Attachment0   = att
-	ao.Mode          = Enum.OrientationAlignmentMode.OneAttachment
+	ao.Name           = "FlightOrientation"
+	ao.Attachment0    = att
+	ao.Mode           = Enum.OrientationAlignmentMode.OneAttachment
 	ao.Responsiveness = 20
-	ao.MaxTorque     = 1e5
-	ao.CFrame        = part.CFrame
-	ao.Parent        = part
+	ao.MaxTorque      = if isTurret then 0 else 1e5
+	ao.CFrame         = part.CFrame
+	ao.Enabled        = not isTurret
+	ao.Parent         = part
 
 	-- Punto de luz del acento
 	local pl = Instance.new("PointLight")
 	pl.Color      = spec.accentColor
-	pl.Brightness = 2
-	pl.Range      = 12
+	pl.Brightness = 2.5
+	pl.Range      = 16
 	pl.Parent     = part
+
+	-- Rótulo holográfico diegético de hostilidad
+	local tagGui = Instance.new("BillboardGui")
+	tagGui.Name        = "EnemyTag"
+	tagGui.Size        = UDim2.fromOffset(140, 22)
+	tagGui.StudsOffset = Vector3.new(0, part.Size.Y + 1.2, 0)
+	tagGui.AlwaysOnTop = true
+	tagGui.MaxDistance = 180
+	tagGui.Parent      = part
+
+	local tagText = Instance.new("TextLabel")
+	tagText.Size                   = UDim2.fromScale(1, 1)
+	tagText.BackgroundTransparency = 1
+	tagText.Font                   = Enum.Font.Code
+	tagText.Text                   = string.format("▼ %s ▼", spec.name:upper())
+	tagText.TextColor3             = spec.accentColor
+	tagText.TextSize               = 10
+	tagText.TextStrokeTransparency = 0.3
+	tagText.Parent                 = tagGui
 
 	return part
 end
@@ -200,11 +223,11 @@ end
 ----------------------------------------------------------------------
 -- SPAWN DE AGENTE ENEMIGO
 ----------------------------------------------------------------------
-function EnemyAIService_Spawn(specId: string, spawnPosition: Vector3, difficulty: number?)
+function EnemyAIService_Spawn(specId: string, spawnPosition: Vector3, difficulty: number?, zoneId: string?): BasePart?
 	local baseSpec = EnemyTypes.ById[specId]
 	if not baseSpec then
 		warn("[EnemyAIService] Spec no encontrado:", specId)
-		return
+		return nil
 	end
 
 	local spec = EnemyTypes.Scale(baseSpec, difficulty or 0)
@@ -230,11 +253,26 @@ function EnemyAIService_Spawn(specId: string, spawnPosition: Vector3, difficulty
 	}
 
 	activeAgents[part] = agent
-	print(string.format("[EnemyAIService] Spawned %s en %s", spec.name, tostring(spawnPosition)))
+
+	-- Registrar en el sistema de combate de servidor
+	if _G.CombatService and _G.CombatService.Register then
+		_G.CombatService.Register(
+			part,
+			spec.maxHealth,
+			100,  -- maxHeat
+			10,   -- heatCooling
+			spec.armorReduction,
+			0.2,  -- empResistance
+			nil   -- owner (NPC)
+		)
+	end
+
+	print(string.format("[EnemyAIService] Spawned %s en %s (Zona: %s)", spec.name, tostring(spawnPosition), zoneId or "Manual"))
+	return part
 end
 
 ----------------------------------------------------------------------
--- LÓGICA DE IA — Daño por embestida
+-- LÓGICA DE IA — Daño por embestida (Scav-Gnats)
 ----------------------------------------------------------------------
 local function handleRamming(agent: EnemyAgent)
 	if not agent.targetPart then return end
@@ -242,24 +280,46 @@ local function handleRamming(agent: EnemyAgent)
 	if now - agent.lastRamTime < RAMMING_COOLDOWN then return end
 
 	local dist = (agent.part.Position - agent.targetPart.Position).Magnitude
-	if dist > 5 then return end  -- solo embestir en contacto cercano
+	if dist > 6 then return end  -- solo embestir en contacto cercano
 
 	agent.lastRamTime = now
 
-	-- Aplicar impulso físico al dron del jugador (desestabilización)
+	-- Aplicar impulso físico al dron del jugador (desestabilización aerodinámica)
 	local impactDir = (agent.targetPart.Position - agent.part.Position).Unit
 	agent.targetPart.AssemblyLinearVelocity += impactDir * agent.spec.rammingImpulse
 
+	-- Partículas de chispas en el dron embestido
+	local sparkPart = Instance.new("Part")
+	sparkPart.Size = Vector3.new(1, 1, 1)
+	sparkPart.Position = (agent.part.Position + agent.targetPart.Position) / 2
+	sparkPart.Transparency = 1
+	sparkPart.Anchored = true
+	sparkPart.CanCollide = false
+	sparkPart.Parent = Workspace
+
+	local pe = Instance.new("ParticleEmitter")
+	pe.Color = ColorSequence.new(Color3.fromRGB(255, 100, 30))
+	pe.Size = NumberSequence.new(0.5, 0)
+	pe.Lifetime = NumberRange.new(0.2, 0.35)
+	pe.Rate = 120
+	pe.Speed = NumberRange.new(15, 25)
+	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Parent = sparkPart
+	task.delay(0.15, function()
+		if pe and pe.Parent then pe.Enabled = false end
+	end)
+	Debris:AddItem(sparkPart, 0.6)
+
 	-- Registrar daño en CombatService
-	if _G.CombatService then
-		_G.CombatService.ApplyDamage(agent.targetPart, 15)  -- daño de embestida base
+	if _G.CombatService and _G.CombatService.ApplyDamage then
+		_G.CombatService.ApplyDamage(agent.targetPart, 14)
 	end
 
-	print(string.format("[EnemyAIService] %s embistió al jugador (%.0f N)", agent.spec.name, agent.spec.rammingImpulse))
+	print(string.format("[EnemyAIService] %s embistió al jugador (%.0f N | -14 HP)", agent.spec.name, agent.spec.rammingImpulse))
 end
 
 ----------------------------------------------------------------------
--- LÓGICA DE IA — Disparo de torreta/interceptor
+-- LÓGICA DE IA — Disparo de torreta/interceptor con Proyectiles Visibles
 ----------------------------------------------------------------------
 local function handleFiring(agent: EnemyAgent)
 	if agent.spec.burstWeapon == "" or not agent.targetPart then return end
@@ -282,15 +342,44 @@ local function handleFiring(agent: EnemyAgent)
 	local hasLOS = not result or result.Instance == agent.targetPart
 	if not hasLOS then return end
 
-	-- Delegar daño al CombatService
-	if _G.CombatService then
-		if agent.spec.burstWeapon == "synapse_overheat" then
-			-- Microondas: inyectar calor
-			_G.CombatService.ApplyHeat(agent.targetPart, 12)
-		elseif agent.spec.burstWeapon == "rail_driver" then
-			-- Cañón de riel: daño cinético
-			_G.CombatService.ApplyDamage(agent.targetPart, 30)
+	-- Delegar daño al CombatService y renderizar proyectil visual
+	if agent.spec.burstWeapon == "synapse_overheat" then
+		-- Kuroshio: Haz de microondas violeta continuo/pulsado
+		local pulse = Instance.new("Part")
+		pulse.Name = "MicrowavePulse"
+		pulse.Size = Vector3.new(0.4, 0.4, dist)
+		pulse.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
+		pulse.Anchored = true
+		pulse.CanCollide = false
+		pulse.Material = Enum.Material.Neon
+		pulse.Color = Color3.fromRGB(180, 0, 255)
+		pulse.Transparency = 0.3
+		pulse.Parent = Workspace
+		Debris:AddItem(pulse, 0.22)
+
+		if _G.CombatService and _G.CombatService.ApplyHeat then
+			_G.CombatService.ApplyHeat(agent.targetPart, 14)
 		end
+		print(string.format("[EnemyAIService] %s inyectó microondas térmicas (+14 calor)", agent.spec.name))
+
+	elseif agent.spec.burstWeapon == "rail_driver" then
+		-- Aegis: Trazador cinético Gauss dorado de alta velocidad
+		local tracer = Instance.new("Part")
+		tracer.Name = "GaussTracer"
+		tracer.Size = Vector3.new(0.6, 0.6, dist)
+		tracer.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
+		tracer.Anchored = true
+		tracer.CanCollide = false
+		tracer.Material = Enum.Material.Neon
+		tracer.Color = Color3.fromRGB(255, 180, 0)
+		tracer.Transparency = 0.15
+		tracer.Parent = Workspace
+		Debris:AddItem(tracer, 0.15)
+
+		if _G.CombatService and _G.CombatService.ApplyDamage then
+			_G.CombatService.ApplyDamage(agent.targetPart, 22)
+		end
+		print(string.format("[EnemyAIService] %s disparó Rail-Driver Gauss (-22 HP)", agent.spec.name))
 	end
 end
 
@@ -359,11 +448,12 @@ RunService.Heartbeat:Connect(function(dt: number)
 			handleRamming(agent)
 
 		elseif mode == "turret" then
-			-- Estacionaria: solo rota hacia el objetivo
+			-- Estacionaria: rota CFrame hacia el objetivo suavemente
 			if agent.targetPart then
-				local lookDir = (agent.targetPart.Position - part.Position)
-				if lookDir.Magnitude > 0 then
-					agent.alignOrient.CFrame = CFrame.lookAt(Vector3.zero, lookDir.Unit, Vector3.yAxis)
+				local toTarget = (agent.targetPart.Position - part.Position)
+				if toTarget.Magnitude > 0 then
+					local targetCF = CFrame.lookAt(part.Position, agent.targetPart.Position)
+					part.CFrame = part.CFrame:Lerp(targetCF, 0.20)
 				end
 				handleFiring(agent)
 			end
@@ -372,7 +462,7 @@ RunService.Heartbeat:Connect(function(dt: number)
 
 		elseif mode == "orbit" and agent.targetPart then
 			-- Órbita lateral tangencial
-			agent.orbitAngle += AI_TICK_RATE * 0.5  -- avanza 0.5 rad/s por tick
+			agent.orbitAngle += AI_TICK_RATE * 0.6  -- avanza en órbita
 			steerForce = orbitTangent(
 				part.Position,
 				agent.targetPart.Position,
@@ -407,35 +497,171 @@ RunService.Heartbeat:Connect(function(dt: number)
 end)
 
 ----------------------------------------------------------------------
--- SPAWN DE OLEADAS DE PRUEBA (ejemplos de uso)
+-- DIRECTOR DE AMENAZA Y PARTICIONADO ESPACIAL (Fase 2)
 ----------------------------------------------------------------------
--- Generador automático de enjambres en posiciones aleatorias para prueba en studio
-local function spawnTestWave()
-	local positions = {
-		Vector3.new(30, 15, 30),
-		Vector3.new(-40, 20, 50),
-		Vector3.new(60, 12, -30),
-	}
+type ThreatArchetype = {
+	specId: string,
+	offset: Vector3,
+	difficulty: number,
+}
 
-	-- Enjambre de gnats
-	for i = 1, 3 do
-		local pos = positions[math.random(#positions)] + Vector3.new(math.random(-10, 10), math.random(5, 20), math.random(-10, 10))
-		EnemyAIService_Spawn("scav_gnats", pos, 0.2)
+type ThreatZone = {
+	id: string,
+	name: string,
+	threatLevel: string,
+	center: Vector3,
+	activationRadius: number,
+	deactivationRadius: number,
+	respawnCooldown: number,
+	lastClearedTime: number,
+	archetypes: { ThreatArchetype },
+	activeParts: { BasePart },
+	isActive: boolean,
+}
+
+local threatZones: { [string]: ThreatZone } = {
+	Zone_TorreA = {
+		id = "Zone_TorreA",
+		name = "Sector Industrial (Torre A)",
+		threatLevel = "hostile",
+		center = Vector3.new(160, 95, -180),
+		activationRadius = 220,
+		deactivationRadius = 320,
+		respawnCooldown = 35,
+		lastClearedTime = 0,
+		archetypes = {
+			{ specId = "scav_gnats", offset = Vector3.new(-25, -20, 25), difficulty = 0.1 },
+			{ specId = "scav_gnats", offset = Vector3.new(25, -10, -20),  difficulty = 0.15 },
+			{ specId = "scav_gnats", offset = Vector3.new(0, -30, 30),    difficulty = 0.2 },
+		},
+		activeParts = {},
+		isActive = false,
+	},
+	Zone_TorreB = {
+		id = "Zone_TorreB",
+		name = "Sector Black Ops (Torre B)",
+		threatLevel = "black_ops",
+		center = Vector3.new(-200, 50, 140),
+		activationRadius = 250,
+		deactivationRadius = 350,
+		respawnCooldown = 45,
+		lastClearedTime = 0,
+		archetypes = {
+			-- Torreta Aegis montada en cornisa elevada cercana a la torre
+			{ specId = "aegis_44",  offset = Vector3.new(20, 22, -20), difficulty = 0.25 },
+			-- Interceptor orbital Kuroshio patrullando a gran altitud
+			{ specId = "kuroshio_v", offset = Vector3.new(-10, 45, 10), difficulty = 0.35 },
+		},
+		activeParts = {},
+		isActive = false,
+	},
+}
+
+local function activateZone(zone: ThreatZone)
+	if zone.isActive then return end
+	local now = os.clock()
+	if (now - zone.lastClearedTime) < zone.respawnCooldown then
+		return
 	end
 
-	-- Interceptor orbital
-	EnemyAIService_Spawn("kuroshio_v", Vector3.new(100, 30, 0), 0.3)
+	zone.isActive = true
+	table.clear(zone.activeParts)
+
+	for _, arch in ipairs(zone.archetypes) do
+		local spawnPos = zone.center + arch.offset
+		local part = EnemyAIService_Spawn(arch.specId, spawnPos, arch.difficulty, zone.id)
+		if part then
+			table.insert(zone.activeParts, part)
+		end
+	end
+
+	print(string.format("[ThreatDirector] ¡Zona '%s' ACTIVADA! %d unidades hostiles en vuelo.", zone.name, #zone.activeParts))
 end
 
--- NOTA: Spawn de prueba automático desactivado para evitar ataques no solicitados
--- mientras el jugador está aprendiendo o realizando entregas estándar.
--- Usar _G.EnemyAIService.SpawnTestWave() o _G.EnemyAIService.Spawn(...) bajo demanda.
---[[
-task.delay(10, function()
-	spawnTestWave()
-	print("[EnemyAIService] Oleada de prueba inicial generada.")
+local function deactivateZone(zone: ThreatZone)
+	if not zone.isActive then return end
+	zone.isActive = false
+
+	for _, part in ipairs(zone.activeParts) do
+		if part and part.Parent then
+			activeAgents[part] = nil
+			if _G.CombatService and _G.CombatService.Unregister then
+				_G.CombatService.Unregister(part)
+			end
+			-- Desvanecer suavemente y destruir
+			task.spawn(function()
+				for i = 0, 1, 0.25 do
+					if part and part.Parent then
+						part.Transparency = i
+					end
+					task.wait(0.05)
+				end
+				if part and part.Parent then
+					part:Destroy()
+				end
+			end)
+		end
+	end
+
+	table.clear(zone.activeParts)
+	print(string.format("[ThreatDirector] Zona '%s' replegada por distancia. Recursos liberados.", zone.name))
+end
+
+-- Bucle de Director de Amenazas (1 Hz para máximo rendimiento de servidor)
+task.spawn(function()
+	while true do
+		task.wait(1.0)
+
+		local dronePart = Workspace:FindFirstChild("TestDrone") :: BasePart?
+		if not dronePart then continue end
+
+		local isFlying = (not dronePart.Anchored)
+		local dronePos = dronePart.Position
+		local distToBase = (dronePos - Vector3.new(0, 4, 0)).Magnitude
+
+		-- 1. Si no está volando o está en la Base Central (< 90 studs), Zona Segura Absoluta
+		if not isFlying or distToBase < 90 then
+			for _, zone in pairs(threatZones) do
+				if zone.isActive then
+					deactivateZone(zone)
+				end
+			end
+			continue
+		end
+
+		-- 2. Evaluar cada zona según proximidad del repartidor
+		for _, zone in pairs(threatZones) do
+			local dist = (dronePos - zone.center).Magnitude
+
+			if dist <= zone.activationRadius then
+				if not zone.isActive then
+					activateZone(zone)
+				end
+			elseif dist >= zone.deactivationRadius then
+				if zone.isActive then
+					deactivateZone(zone)
+				end
+			end
+
+			-- 3. Comprobar si todos los enemigos de la zona activa fueron neutralizados en combate
+			if zone.isActive and #zone.activeParts > 0 then
+				local aliveCount = 0
+				for _, part in ipairs(zone.activeParts) do
+					if part and part.Parent and activeAgents[part] and activeAgents[part].isAlive then
+						aliveCount += 1
+					end
+				end
+
+				if aliveCount == 0 then
+					zone.isActive = false
+					zone.lastClearedTime = os.clock()
+					table.clear(zone.activeParts)
+					print(string.format("[ThreatDirector] ¡SECTOR '%s' DESPEJADO! Cooldown táctico de %ds activado.", zone.name, zone.respawnCooldown))
+				end
+			end
+		end
+	end
 end)
-]]
 
 -- Exponer API global para uso desde Main.server.luau
 _G.EnemyAIService = {
@@ -445,7 +671,19 @@ _G.EnemyAIService = {
 		for _ in pairs(activeAgents) do count += 1 end
 		return count
 	end,
+	GetZones = function()
+		return threatZones
+	end,
+	DeactivateAllZones = function()
+		for _, zone in pairs(threatZones) do
+			deactivateZone(zone)
+		end
+	end,
+	ActivateZone = function(zoneId: string)
+		local zone = threatZones[zoneId]
+		if zone then activateZone(zone) end
+	end,
 }
 
-print("[EnemyAIService] Servicio de IA activo a 10 Hz.")
+print("[EnemyAIService] Servicio de IA y Director de Amenaza activo a 10 Hz / 1 Hz.")
 

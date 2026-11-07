@@ -151,15 +151,39 @@ local function destroyDrone(state: DroneState)
 	explosion.Parent         = Workspace
 	Debris:AddItem(explosion, 3)
 
-	print(string.format("[CombatService] Dron destruido: %s", part.Name))
-	activeDrones[part] = nil
+	if state.owner then
+		-- Dron del jugador: NO destruir TestDrone físicamente; resetear a Base Central
+		print(string.format("[CombatService] Dron del jugador %s destruido. Reseteando a Base Central.", state.owner.Name))
+		part.AssemblyLinearVelocity = Vector3.zero
+		part.AssemblyAngularVelocity = Vector3.zero
+		part.Anchored = true
+		part.CFrame = CFrame.new(0, 6.2, 0)
+		state.health = state.maxHealth
+		state.heat = 0
+		state.isEMPed = false
 
-	-- Destruir la parte física del dron enemigo tras breve pausa
-	task.delay(0.5, function()
-		if part and part.Parent then
-			part:Destroy()
+		-- Notificar al jugador
+		onDamagedEvent:FireClient(state.owner, {
+			damage    = 0,
+			rawDamage = 0,
+			weapon    = "DESTRUIDO // RESPAWN EN BASE",
+			healthPct = 1.0,
+		})
+
+		local flightEv = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
+		if flightEv then
+			flightEv:FireClient(state.owner, "StopFlying")
 		end
-	end)
+	else
+		-- Dron enemigo: retirar del registro y destruir la parte física tras breve pausa
+		print(string.format("[CombatService] Dron enemigo neutralizado: %s", part.Name))
+		activeDrones[part] = nil
+		task.delay(0.4, function()
+			if part and part.Parent then
+				part:Destroy()
+			end
+		end)
+	end
 end
 
 -- Activa estado EMP: deshabilita LinearVelocity del dron 2 segundos

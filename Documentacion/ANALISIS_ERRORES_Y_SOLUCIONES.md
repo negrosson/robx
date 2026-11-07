@@ -416,6 +416,33 @@ Al modificar el nombre de la recompensa/moneda en `src/server/Main.server.luau` 
    * Los letreros holográficos sobre los helipuertos (`PadHoloSign`) ahora proyectan en 3D el nivel de amenaza y la recompensa asociada, visibles hasta a 1000 studs.
 
 ---
+
+## 16. Fase 2 Enriquecida: Orquestación Espacial de IA, Particionado por Zonas y Director de Amenaza Dinámico (Threat Director)
+
+### 🔍 1. Diagnóstico y Visión de Juego
+* **IA Desactivada:** El servicio `EnemyAIService.server.luau` poseía conductas vectoriales completas (10 Hz), pero el spawner estaba comentado y no existía un sistema que activara o replegara enemigos según la ruta de vuelo del jugador.
+* **Riesgo de Saturación de Rendimiento:** Un spawn descontrolado generaría caídas de frames en el servidor o persecuciones infinitas molestas que arruinarían la experiencia de entrega.
+* **Falta de Feedback de Combate:** Las torretas y naves enemigas no proyectaban visualmente sus ataques, impidiendo al jugador esquivar o reaccionar.
+
+### 🛠️ 2. Solución de Ingeniería Implementada (Fase 2)
+1. **Director de Amenaza Dinámico (`Threat Director` a 1 Hz):**
+   * El servidor monitorea a 1 Hz la posición del dron repartidor sin sobrecargar la CPU.
+   * **Burbuja de Seguridad en Base Central (`< 90 studs`):** La Base es 100% pacífica. Cualquier enemigo activo se repliega automáticamente al regresar a la Base o al bajarse del dron.
+   * **Activación y Culling por Proximidad:**
+     * **Sector Industrial (Torre A - Hostil 🟡):** Se activa al entrar a $\le 220$ studs. Despliega un enjambre de 3 `Scav-Gnats` que buscan embestir el cargamento con desestabilización física y chispas de impacto. Al alejarse a $\ge 320$ studs, los agentes se repliegan y desvanecen suavemente.
+     * **Sector Black Ops (Torre B - Crítico 🔴):** Se activa al entrar a $\le 250$ studs. Despliega una torreta estacionaria `Aegis-44` en una cornisa táctica y un interceptor orbital `Kuroshio-V` a gran altitud. Se repliegan a $\ge 350$ studs.
+2. **Sistema de Despeje de Sector (Sector Clearing Cooldown):**
+   * Si el jugador neutraliza a todos los enemigos de una zona activa, la zona queda marcada como **DESPEJADA** durante un cooldown táctico (35s en Torre A, 45s en Torre B), otorgando paso seguro como recompensa.
+3. **Físicas y Telegrafiado Visual Cinematográfico:**
+   * **Torreta Aegis-44:** Anclada firmemente a su montura (`Anchored = true`), rota suavemente su orientación hacia el dron mediante `CFrame:Lerp` y dispara proyectiles cinéticos con un trazador Gauss dorado brillante (`GaussTracer`).
+   * **Interceptor Kuroshio-V:** Maniobra en órbita lateral a 70 studs/s inyectando microondas térmicas con un rayo violeta continuo (`MicrowavePulse`).
+   * **Scav-Gnats:** Embestidas cinéticas con eyección de chispas naranjas al colisionar.
+   * **Identificación Táctica Diegética:** Todos los enemigos portan un rótulo holográfico `[EnemyTag]` visible hasta a 180 studs con el color neón de su facción.
+4. **Protección Anti-Despawn del Dron del Jugador (`CombatService.server.luau`):**
+   * Se modificó `destroyDrone`: si un dron destruido pertenece a un jugador (`owner ~= nil`), el servidor **no destruye la parte física**, sino que genera una detonación cinemática y reubica de forma segura el dron en la Base Central, restaurando la integridad y el vuelo sin romper instancias en Workspace.
+
+---
 *Fin del documento de auditoría técnica.*
+
 
 
