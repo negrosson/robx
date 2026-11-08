@@ -191,6 +191,12 @@ local function destroyDrone(state: DroneState, killerPlayer: Player?)
 		state.heat = 0
 		state.isEMPed = false
 
+		-- Reactivar ProximityPrompt diegético en el servidor
+		local prompt = part:FindFirstChild("PilotPrompt") :: ProximityPrompt?
+		if prompt then
+			prompt.Enabled = true
+		end
+
 		-- Devolver propiedad física al servidor para evitar desincronizaciones de red
 		pcall(function()
 			part:SetNetworkOwnershipAuto()

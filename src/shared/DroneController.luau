@@ -855,8 +855,12 @@ function DroneController:LockPlayerCharacter()
 
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if hum then
-		self.originalWalkSpeed  = hum.WalkSpeed
-		self.originalJumpHeight = hum.JumpHeight
+		if hum.WalkSpeed > 0 then
+			self.originalWalkSpeed = hum.WalkSpeed
+		end
+		if hum.JumpHeight > 0 then
+			self.originalJumpHeight = hum.JumpHeight
+		end
 		hum.WalkSpeed  = 0
 		hum.JumpHeight = 0
 		hum.JumpPower  = 0
@@ -871,8 +875,8 @@ function DroneController:UnlockPlayerCharacter()
 
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if hum then
-		hum.WalkSpeed  = self.originalWalkSpeed  or 16
-		hum.JumpHeight = self.originalJumpHeight or 7.2
+		hum.WalkSpeed  = if (self.originalWalkSpeed and self.originalWalkSpeed > 0) then self.originalWalkSpeed else 16
+		hum.JumpHeight = if (self.originalJumpHeight and self.originalJumpHeight > 0) then self.originalJumpHeight else 7.2
 		hum.JumpPower  = 50
 	end
 end

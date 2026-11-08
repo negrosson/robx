@@ -938,6 +938,51 @@ Al intentar pilotar el dron con la tecla `[E]`, se presentaban tres anomalías c
    * En `handleFiring`, si un rascacielos bloquea el vector al jugador, el disparo de la torreta Aegis-44 o el pulso microondas de Kuroshio queda cancelado.
 
 ---
+
+## 30. Resolución de Condición de Carrera en Activación de Pilotaje ([E] ProximityPrompt vs UserInputService)
+
+### 🔍 Diagnóstico del Fallo de Pilotaje ("Le doy a la [E] y no ocurre nada")
+Al acercarse a `TestDrone` e interactuar con la tecla `[E]`, el jugador experimentaba que el dron no despegaba ni respondía al control. El análisis de flujo de ejecución reveló una condición de carrera instantánea (*flip-flop* en el mismo fotograma):
+1. **Doble Disparo No Filtrado (`gpe` omitido):**
+   En `Main.client.luau`, la función `UserInputService.InputBegan` contenía una omisión deliberada de `gpe` (*gameProcessedEvent*) pensada para capturar la tecla sin restricciones:
+   ```luau
+   if gpe then
+       local focused = UserInputService:GetFocusedTextBox()
+       if focused then return end
+   end
+   ```
+2. **Ciclo de Cancelación Inmediata en Microsegundos:**
+   Al presionar `[E]` frente al dron:
+   * El motor de Roblox disparaba primero `ProximityPromptService.PromptTriggered`, llamando a `enterDrone()`.
+   * `enterDrone()` establecía `isPiloting = true` e iniciaba `myDrone:StartFlying()`.
+   * En el mismo ciclo de despacho de eventos de entrada, `UserInputService.InputBegan` se ejecutaba para la misma pulsación de `[E]`. Al ignorar `gpe` (que era `true` porque el ProximityPrompt ya había procesado el evento), el bloque evaluaba:
+     ```luau
+     if not isCurrentlyPiloting() then
+         enterDrone()
+     else
+         exitDrone()
+     end
+     ```
+   * Dado que `isCurrentlyPiloting()` ya era `true` por el paso anterior, el script entraba inmediatamente a la rama `else` y ejecutaba `exitDrone()`.
+   * Como resultado, el dron iniciaba y cancelaba el vuelo en 0 milisegundos. Visualmente, el jugador no percibía ninguna reacción ("no ocurre nada").
+
+### 🛠️ Solución Aplicada
+1. **Debounce Temporal Estricto (`PILOT_TOGGLE_COOLDOWN`):**
+   * Se incorporó una compuerta de tiempo con `lastPilotToggleTime` y un cooldown de `0.5 segundos` en `enterDrone()` y `exitDrone()`.
+   * Cualquier petición concurrente o rebote de evento que intente alternar el estado en menos de 0.5s es rechazada inmediatamente.
+2. **Filtrado Correcto de `gpe` en `UserInputService.InputBegan`:**
+   * Se restauró la verificación `if gpe then return end`.
+   * Cuando el ProximityPrompt procesa la tecla `[E]`, `InputBegan` descarta el evento y no ejecuta la rama `exitDrone()`.
+   * La tecla `[F]` permanece como la vía canónica de teclado para desconectar el visor FPV (`exitDrone()`), mientras que `[E]` solo conmuta si el cooldown ha expirado y no proviene de un prompt en pantalla.
+3. **Gestión de Visibilidad Local del ProximityPrompt:**
+   * En `enterDrone()`, el script oculta localmente el `PilotPrompt` (`prompt.Enabled = false`) para evitar interferencias visuales o capturas accidentales durante el vuelo.
+   * En `exitDrone()` y al reaparecer el dron tras ser destruido (`CombatService`), el `PilotPrompt` se reactiva limpiamente (`prompt.Enabled = true`).
+4. **Protección de Velocidad del Avatar (`LockPlayerCharacter` / `UnlockPlayerCharacter`):**
+   * En `DroneController.luau`, se aseguró que al guardar `self.originalWalkSpeed` solo se capturen valores mayores a 0, evitando que transiciones rápidas dejen al avatar del jugador permanentemente inmóvil con `WalkSpeed = 0`.
+5. **Enlace Directo de Respaldo:**
+   * Se conectó `prompt.Triggered` directamente sobre la instancia de `TestDrone` además del despachador global `ProximityPromptService`, garantizando captura inmediata aún con micro-latencias de red.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 

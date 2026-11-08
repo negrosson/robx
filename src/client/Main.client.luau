@@ -74,11 +74,14 @@ end
 ----------------------------------------------------------------------
 -- 2. ESTADO GLOBAL
 ----------------------------------------------------------------------
-local isPiloting        = false
-local myDrone: any      = nil   -- DroneController instance
-local droneReady        = false
+local isPiloting           = false
+local myDrone: any         = nil   -- DroneController instance
+local droneReady           = false
 local DroneController: any = nil
 local CyberGoggles: any    = nil
+
+local lastPilotToggleTime  = 0
+local PILOT_TOGGLE_COOLDOWN = 0.5 -- Cooldown en segundos para prevenir rebotes de tecla o dobles eventos
 
 local function isCurrentlyPiloting(): boolean
 	return isPiloting or (myDrone and (myDrone :: any).isFlying == true)
@@ -89,6 +92,8 @@ end
 ----------------------------------------------------------------------
 local function enterDrone()
 	if isCurrentlyPiloting() then return end
+	if os.clock() - lastPilotToggleTime < PILOT_TOGGLE_COOLDOWN then return end
+	lastPilotToggleTime = os.clock()
 
 	if not droneReady or myDrone == nil then
 		dbg("Dron NO listo aún, espera...")
@@ -99,6 +104,13 @@ local function enterDrone()
 	dbg("Iniciando vuelo FPV...")
 	isPiloting = true
 	setBtn("[F] DESCONECTAR VISOR FPV", 255, 220, 0)
+
+	-- Ocultar prompt diegético localmente de inmediato mientras vuela
+	local dronePart = Workspace:FindFirstChild("TestDrone")
+	if dronePart then
+		local prompt = dronePart:FindFirstChild("PilotPrompt") :: ProximityPrompt?
+		if prompt then prompt.Enabled = false end
+	end
 
 	-- Activar gafas en avatar
 	local char = localPlayer.Character
@@ -112,6 +124,10 @@ local function enterDrone()
 		warn("[CLIENTE] Error en StartFlying:", err)
 		isPiloting = false
 		setBtn("[E] ERROR AL VOLAR - REINTENTA", 255, 80, 80)
+		if dronePart then
+			local prompt = dronePart:FindFirstChild("PilotPrompt") :: ProximityPrompt?
+			if prompt then prompt.Enabled = true end
+		end
 	else
 		dbg("Vuelo FPV activo! WASD=mover Space=subir Shift/C=bajar Q=turbo X=freno G=entregar V=FPV")
 	end
@@ -119,10 +135,20 @@ end
 
 local function exitDrone()
 	if not isCurrentlyPiloting() then return end
+	if os.clock() - lastPilotToggleTime < PILOT_TOGGLE_COOLDOWN then return end
+	lastPilotToggleTime = os.clock()
+
 	isPiloting = false
 
 	dbg("Desconectando visor FPV...")
 	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+
+	-- Restaurar visibilidad del prompt diegético localmente
+	local dronePart = Workspace:FindFirstChild("TestDrone")
+	if dronePart then
+		local prompt = dronePart:FindFirstChild("PilotPrompt") :: ProximityPrompt?
+		if prompt then prompt.Enabled = true end
+	end
 
 	local char = localPlayer.Character
 	if char and CyberGoggles then
@@ -135,7 +161,11 @@ end
 
 -- Click en botón inferior
 toggleBtn.MouseButton1Click:Connect(function()
-	if not isCurrentlyPiloting() then enterDrone() else exitDrone() end
+	if not isCurrentlyPiloting() then
+		enterDrone()
+	else
+		exitDrone()
+	end
 end)
 
 -- Interacción con ProximityPrompt 3D [E] en el mundo
@@ -149,25 +179,24 @@ ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
 end)
 
 ----------------------------------------------------------------------
--- FIX CRÍTICO: Tecla E sin filtro gpe para permitir captura siempre.
--- Se sincroniza con isCurrentlyPiloting() para evitar desfasajes.
+-- GESTIÓN DE ENTRADA POR TECLADO
+-- Resuelve la condición de carrera con ProximityPromptService evitando
+-- que una pulsación de [E] active y desactive el vuelo en el mismo frame.
 ----------------------------------------------------------------------
 UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
-	-- Solo bloquear si está escribiendo en el chat (TextBox con foco)
-	if gpe then
-		local focused = UserInputService:GetFocusedTextBox()
-		if focused then return end
-	end
-
+	-- Si el motor ya procesó el input (ej. ProximityPrompt activado, TextBox/Chat, UI), no duplicar acción
+	if gpe then return end
 	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
 	if input.KeyCode == Enum.KeyCode.E then
+		-- Tecla E fuera de interacción con ProximityPrompt directo
 		if not isCurrentlyPiloting() then
 			enterDrone()
 		else
 			exitDrone()
 		end
 	elseif input.KeyCode == Enum.KeyCode.F then
+		-- Tecla F designada explícitamente para salir del modo vuelo FPV
 		if isCurrentlyPiloting() then
 			exitDrone()
 		end
@@ -274,6 +303,18 @@ task.spawn(function()
 		return
 	end
 	dbg("TestDrone encontrado: " .. droneEntity:GetFullName())
+
+	-- Conexión directa defensiva al ProximityPrompt del dron
+	task.spawn(function()
+		local prompt = (droneEntity :: Instance):WaitForChild("PilotPrompt", 5) :: ProximityPrompt?
+		if prompt then
+			prompt.Triggered:Connect(function(player)
+				if player == localPlayer and not isCurrentlyPiloting() then
+					enterDrone()
+				end
+			end)
+		end
+	end)
 
 	-- Resolver eventos de red canónicos mediante NetworkEvents
 	local NetworkEvents = require(neModule :: ModuleScript)
