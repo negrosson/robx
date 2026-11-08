@@ -1039,6 +1039,46 @@ Al presionar `[E]`, la interfaz mostraba `[E] CARGANDO DRON... ESPERA` y no perm
    * Se redujo el timeout de búsqueda y se eliminó la espera innecesaria en `ReplicatedStorage` raíz cuando la carpeta canónica `CyberNetworkEvents` ya existe, resolviendo eventos en menos de 1 milisegundo.
 
 ---
+
+## 33. Resolución del Error `ERROR require(DroneController)` y Ambigüedad Sintáctica en Luau
+
+### 🔍 Diagnóstico del Error
+Al iniciar o interactuar con el dron, el botón holográfico mostraba: `ERROR require(DroneController)`.
+El análisis del analizador sintáctico de Luau (`luau-lsp analyze`) arrojó:
+`src/shared/DroneController.luau(684,5): SyntaxError: Ambiguous syntax: this looks like an argument list for a function call, but could also be a start of new statement; use ';' to separate statements`
+
+1. **Causa Sintáctica:**
+   En `DroneController.luau`, la línea 683 terminaba con la expresión:
+   ```luau
+   local cleanName = lockedEnemy.Name:gsub("_%d+", "")
+   (self.hud :: any):SetTargetLock(cleanName, lockedEnemyDist)
+   ```
+   En la gramática de Luau/Lua, cuando una línea comienza con un paréntesis de apertura `(` inmediatamente después de una expresión, el parser lo interpreta ambiguamente como si se estuviera llamando a la expresión anterior (`""(...)`). Esto provocó que el compilador de Luau en Roblox rechazara el archivo completo al compilarlo para el cliente.
+2. **Servicio Debris No Declarado:**
+   En los métodos de armas y misiles guiados (`FireMissile`, `ReloadMissiles`, `SpawnLocalMissile`), se invocaba `Debris:AddItem(...)` sin haber obtenido el servicio `Debris` a nivel de módulo (`game:GetService("Debris")`).
+3. **Manejo de Errores en `Main.client.luau`:**
+   El mensaje de error no diferenciaba si el `ModuleScript` no existía en `ReplicatedStorage` o si fallaba por error de ejecución/sintaxis interna.
+
+### 🛠️ Solución Aplicada
+1. **Desambiguación Sintáctica en `DroneController.luau`:**
+   Se desacopló la llamada a la interfaz usando una variable tipada:
+   ```luau
+   local hudAny: any = self.hud
+   if hudAny and hudAny.SetTargetLock then
+       if lockedEnemy then
+           local cleanName = lockedEnemy.Name:gsub("_%d+", "")
+           hudAny:SetTargetLock(cleanName, lockedEnemyDist)
+       else
+           hudAny:SetTargetLock(nil)
+       end
+   end
+   ```
+2. **Declaración del Servicio `Debris`:**
+   Se incorporó `local Debris = game:GetService("Debris")` en la cabecera de `DroneController.luau`.
+3. **Diagnóstico Mejorado en `Main.client.luau`:**
+   Se separó la verificación de existencia de la instancia `ModuleScript` en `ReplicatedStorage` de la ejecución de `require()`, reportando dinámicamente cualquier error exacto devuelto por Luau.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 

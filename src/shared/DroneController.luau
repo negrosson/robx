@@ -1,6 +1,7 @@
 --!strict
 -- src/shared/DroneController.luau
 -- v4.0 - Vuelo físico con inercia suave, requires LAZY dentro de new()
+local Debris            = game:GetService("Debris")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
@@ -678,12 +679,13 @@ function DroneController:StartFlying()
 		end
 
 		self.lockedTarget = lockedEnemy
-		if self.hud and (self.hud :: any).SetTargetLock then
+		local hudAny: any = self.hud
+		if hudAny and hudAny.SetTargetLock then
 			if lockedEnemy then
 				local cleanName = lockedEnemy.Name:gsub("_%d+", "")
-				(self.hud :: any):SetTargetLock(cleanName, lockedEnemyDist)
+				hudAny:SetTargetLock(cleanName, lockedEnemyDist)
 			else
-				(self.hud :: any):SetTargetLock(nil)
+				hudAny:SetTargetLock(nil)
 			end
 		end
 

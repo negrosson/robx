@@ -132,14 +132,22 @@ function initializeDrone(): boolean
 	end
 
 	dbg("Cargando módulo DroneController...")
+	local mod = ReplicatedStorage:FindFirstChild("DroneController") or ReplicatedStorage:WaitForChild("DroneController", 8) :: Instance?
+	if not mod or not mod:IsA("ModuleScript") then
+		warn("[CLIENTE] Módulo DroneController no encontrado en ReplicatedStorage tras 8s")
+		dbg("ERROR: DroneController no encontrado en ReplicatedStorage")
+		setBtn("ERROR: DroneController no encontrado", 255, 80, 80)
+		return false
+	end
+
 	local okCtrl, ctrlMod = pcall(function()
-		local mod = ReplicatedStorage:FindFirstChild("DroneController") or ReplicatedStorage:WaitForChild("DroneController", 6)
 		return require(mod :: ModuleScript)
 	end)
 	if not okCtrl or not ctrlMod then
-		warn("[CLIENTE] DroneController falló al requerir:", ctrlMod)
-		dbg("ERROR: Falló require(DroneController)")
-		setBtn("ERROR require(DroneController)", 255, 80, 80)
+		local errStr = tostring(ctrlMod)
+		warn("[CLIENTE] DroneController falló al requerir:", errStr)
+		dbg("ERR require: " .. errStr:sub(1, 40))
+		setBtn("ERR require: " .. errStr:sub(1, 26), 255, 80, 80)
 		return false
 	end
 	DroneController = ctrlMod
