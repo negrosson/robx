@@ -202,25 +202,28 @@ local SYNAPSE_OVERHEAT: WeaponSpec = {
 ----------------------------------------------------------------------
 -- ÍNDICE PÚBLICO
 ----------------------------------------------------------------------
-DroneWeapons.All: { WeaponSpec } = {
+local allWeapons: { WeaponSpec } = {
 	MAGMA_SPIKE,
 	RAIL_DRIVER,
 	SMART_GYRO_LOCK,
 	SYNAPSE_OVERHEAT,
 }
+DroneWeapons.All = allWeapons
 
-DroneWeapons.ById: { [string]: WeaponSpec } = {}
-for _, spec in ipairs(DroneWeapons.All) do
-	DroneWeapons.ById[spec.id] = spec
+local byIdWeapons: { [string]: WeaponSpec } = {}
+for _, spec in ipairs(allWeapons) do
+	byIdWeapons[spec.id] = spec
 end
+DroneWeapons.ById = byIdWeapons
 
 -- Mapeo de calibre a colores para HUD
-DroneWeapons.CaliberColors: { [string]: Color3 } = {
+local caliberColors: { [string]: Color3 } = {
 	light  = Color3.fromRGB(100, 200, 100),
 	medium = Color3.fromRGB(220, 180,  50),
 	heavy  = Color3.fromRGB(220,  80,  40),
 	cyber  = COL_MICRO,
 }
+DroneWeapons.CaliberColors = caliberColors
 
 -- Verifica si un arma puede montarse en un dron por calibre y tier
 function DroneWeapons.CanEquip(weaponId: string, droneCalibersAllowed: { string }, droneTier: number): boolean

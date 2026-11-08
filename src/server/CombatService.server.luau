@@ -689,5 +689,18 @@ _G.CombatService = {
 	end,
 }
 
+-- Registro retrospectivo de cualquier enemigo ya instanciado en Workspace.EnemyDrones
+task.defer(function()
+	local folder = Workspace:FindFirstChild("EnemyDrones")
+	if folder then
+		for _, child in ipairs(folder:GetChildren()) do
+			if child:IsA("BasePart") and not activeDrones[child] then
+				local bounty = child:GetAttribute("Bounty") or 35
+				CombatService_Register(child, 100, 100, 10, 0.1, 0.2, nil, bounty)
+			end
+		end
+	end
+end)
+
 print("[CombatService] Servicio de combate activo. Esperando conexiones...")
 

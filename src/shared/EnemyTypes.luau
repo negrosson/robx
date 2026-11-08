@@ -155,16 +155,18 @@ local KUROSHIO_V: EnemySpec = {
 ----------------------------------------------------------------------
 -- ÍNDICE PÚBLICO
 ----------------------------------------------------------------------
-EnemyTypes.All: { EnemySpec } = {
+local allEnemies: { EnemySpec } = {
 	SCAV_GNATS,
 	AEGIS_44,
 	KUROSHIO_V,
 }
+EnemyTypes.All = allEnemies
 
-EnemyTypes.ById: { [string]: EnemySpec } = {}
-for _, spec in ipairs(EnemyTypes.All) do
-	EnemyTypes.ById[spec.id] = spec
+local byId: { [string]: EnemySpec } = {}
+for _, spec in ipairs(allEnemies) do
+	byId[spec.id] = spec
 end
+EnemyTypes.ById = byId
 
 -- Genera estadísticas escaladas según dificultad (0.0 = fácil, 1.0 = difícil)
 function EnemyTypes.Scale(spec: EnemySpec, difficulty: number): EnemySpec

@@ -665,6 +665,8 @@ local threatZones: { [string]: ThreatZone } = {
 			{ specId = "scav_gnats", offset = Vector3.new(-16, 12, 16), difficulty = 0.1 },
 			{ specId = "scav_gnats", offset = Vector3.new(16, 16, -14), difficulty = 0.15 },
 			{ specId = "scav_gnats", offset = Vector3.new(0, 10, 20),   difficulty = 0.2 },
+			-- Explorador adelantado patrullando el corredor aéreo visible desde Base
+			{ specId = "scav_gnats", offset = Vector3.new(-65, -30, 65), difficulty = 0.1 },
 		},
 		activeParts = {},
 		isActive = false,

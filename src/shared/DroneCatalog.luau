@@ -242,10 +242,11 @@ DroneCatalog.All = {
 	WNER_T4,
 } :: { DroneSpec }
 
-DroneCatalog.ById: { [string]: DroneSpec } = {}
+local byIdDrones: { [string]: DroneSpec } = {}
 for _, spec in ipairs(DroneCatalog.All) do
-	DroneCatalog.ById[spec.id] = spec
+	byIdDrones[spec.id] = spec
 end
+DroneCatalog.ById = byIdDrones
 
 -- Convierte una DroneSpec en un DroneConfig compatible con DroneController.new()
 function DroneCatalog.ToControllerConfig(spec: DroneSpec): { [string]: any }

@@ -644,6 +644,46 @@ Tras una revisión integral de los scripts del servidor y cliente a lo largo de 
    * Scav-Gnats actualizados con acento neón ámbar/naranja brillante (`#FF5F00`) y escala de 0.65x, logrando una silueta diegética inconfundible en el cielo metropolitano.
 
 ---
+
+## 22. Causa Raíz Oculta: Error Fatal de Sintaxis de Luau VM (`Table.Field: Type =`)
+
+### Diagnóstico Forense Definitivo vía Logs de Roblox Studio
+Una inspección en profundidad de los archivos de registro locales generados por Roblox Studio (`%LOCALAPPDATA%\Roblox\logs\*.log`) reveló el error fatal que impedía el arranque de los servicios del servidor:
+
+```
+[EnemyAIService] Iniciando IA de facciones hostiles...
+Error: ReplicatedStorage.EnemyTypes:158: Expected identifier when parsing method name, got '{'
+Error: Requested module experienced an error while loading
+Info: Script 'ServerScriptService.EnemyAIService', Line 14
+Info: Stack End
+```
+
+### Explicación del Error de Sintaxis
+En el lenguaje Luau (Roblox), la asignación de campos en una tabla **no admite anotaciones de tipo de variable local en la clave de la tabla**:
+* Código erróneo:
+  ```luau
+  EnemyTypes.All: { EnemySpec } = { ... }
+  EnemyTypes.ById: { [string]: EnemySpec } = {}
+  ```
+* En la gramática de Luau, la construcción `Tabla.Campo:` se interpreta inmediatamente como la declaración o llamada a un método (`function Tabla:Metodo()`).
+* Al encontrar el token `{` en lugar de un nombre de método válido, el compilador Luau de Roblox detiene la ejecución con:
+  `Expected identifier when parsing method name, got '{'`
+* Como consecuencia, `require(EnemyTypesModule)` lanzaba una excepción irrecuperable en la línea 14 de `EnemyAIService.server.luau`, **abortando por completo el script antes de que pudiera crear `Workspace.EnemyDrones`, registrar la API global o spawnear una sola unidad**.
+* El mismo error de sintaxis existía en `DroneWeapons.luau` (línea 205) y `DroneCatalog.luau` (línea 245), bloqueando también el arranque de `CombatService.server.luau`.
+
+### Corrección Aplicada
+1. **Separación de Anotación y Asignación de Tabla:**
+   Se declararon variables locales tipadas (`local allEnemies: { EnemySpec } = { ... }`, `local byId: { [string]: EnemySpec } = {}`) y posteriormente se asignaron a los campos de la tabla exportada (`EnemyTypes.All = allEnemies`, `EnemyTypes.ById = byId`).
+   Se corrigió idénticamente en:
+   * [EnemyTypes.luau](file:///x:/Datos%20Proyectos/robx/src/shared/EnemyTypes.luau) (líneas 158-167)
+   * [DroneWeapons.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneWeapons.luau) (líneas 205-223)
+   * [DroneCatalog.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneCatalog.luau) (líneas 245-249)
+2. **Registro Retrospectivo en Combate (`CombatService.server.luau`):**
+   Se añadió un barrido diferido (`task.defer`) que registra automáticamente en `activeDrones` cualquier enemigo que ya se encuentre en `Workspace.EnemyDrones`, garantizando inmunidad a condiciones de carrera entre scripts.
+3. **Explorador Adelantado en Corredor Aéreo:**
+   Se incorporó un cuarto Scav-Gnat en `Zone_TorreA` ubicado en el vector intermedio `(95, 65, -115)` (a 163 studs de la Base), permitiendo que el jugador observe una nave patrullando en el horizonte aéreo inmediatamente al despegar.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro y Sistema de Hostilidad.*
 
 
