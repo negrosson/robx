@@ -1,12 +1,33 @@
 # 📘 Cyber Delivery Tycoon — Análisis Integral de Errores y Correcciones
 
 **Proyecto:** Cyber Delivery Tycoon (Roblox Luau / Rojo)  
-**Fecha de Auditoría y Corrección:** 5 de Noviembre, 2026  
+**Fecha de Auditoría y Corrección:** Noviembre, 2026  
 **Autor:** Nexsson1 & Antigravity AI  
 
 ---
 
-## 📑 Tabla de Contenidos
+## ⚡ Guía Rápida de Diagnóstico y Resolución (Índice Ejecutivo)
+
+> [!IMPORTANT]
+> **Consulta rápida para no tener que leer las 24 secciones detalladas:** Si experimentas un fallo o anomalía en Roblox Studio, ubica el síntoma en esta tabla para conocer de inmediato la causa técnica, el archivo a inspeccionar y la solución aplicada.
+
+| Síntoma / Error | Causa Raíz Técnica | Archivo(s) Clave | Solución Aplicada | Sección |
+| :--- | :--- | :--- | :--- | :--- |
+| **No aparecen enemigos en el mapa** | Error de sintaxis Luau (`Table.Field: Type =`) abortaba `EnemyAIService` en require; zonas nacían apagadas. | [EnemyTypes.luau](file:///x:/Datos%20Proyectos/robx/src/shared/EnemyTypes.luau)<br>[EnemyAIService.luau](file:///x:/Datos%20Proyectos/robx/src/server/EnemyAIService.server.luau) | Asignar tipos a variables locales (`local x: T = ...; Table.x = x`) y spawn persistente en arranque. | [§21](#21-auditoría-integral-multi-fase), [§22](#22-causa-raíz-oculta) |
+| **No se puede reabastecer cargamento en Base** | Split-brain de RemoteEvents (`DeliveryCompleted` iba a instancia huérfana) + bloqueo en `isLanded`. | [NetworkEvents.luau](file:///x:/Datos%20Proyectos/robx/src/shared/NetworkEvents.luau)<br>[DeliveryManager.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DeliveryManager.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Instancia canónica única de RemoteEvent + Triple Capa de Restock (Touchdown, [G] manual y Auto-recarga al despegar). | [§24](#24-reabastecimiento-instantáneo-de-bodega) |
+| **Ataques enemigos débiles o sin impacto** | Umbral de contacto muy estrecho (6 studs a 10 Hz) y falta de proyectiles/SFX telegrafiados. | [EnemyAIService.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/EnemyAIService.server.luau) | Picado a 68 studs/s y 11 studs para Gnats; Cañón Gauss con telémetro carmesí y SFX para Aegis-44; haz dual microondas para Kuroshio. | [§23](#23-pulido-dinámico-de-combate) |
+| **Dron sube al presionar tecla descender (Shift/Ctrl)** | Inversión de signo en cálculo vectorial `moveY = 1 - (-1) = +1`. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Corrección a `moveY = (up) - (down)` con enteros positivos y soporte Shift/Ctrl/C. | [§2](#2-error-crítico-1) |
+| **Tecla [E] no responde o queda en `CARGANDO...`** | Módulos secundarios requeridos de forma síncrona en el nivel superior (*top-level require hang*). | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau)<br>[Main.client.luau](file:///x:/Datos%20Proyectos/robx/src/client/Main.client.luau) | Lazy loading con protección de errores (`pcall`) dentro de `DroneController.new()`. | [§3](#3-error-crítico-2) |
+| **WASD no responde una vez en el aire** | `gameProcessedEvent` (`gpe`) de Roblox Character Controller consumía las teclas de movimiento. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Bypassear filtro de `gpe` para teclas WASD/Espacio/Shift cuando `isFlying == true`. | [§4](#4-error-crítico-3) |
+| **Dron tiembla o cae al suelo al despegar** | Conflicto de Network Ownership y anclaje entre personaje y `TestDrone`. | [Main.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/Main.server.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Servidor desancla y transfiere propiedad física mediante `SetNetworkOwner(player)`. | [§5](#5-error-crítico-4) |
+| **«SISTEMA DE ENTREGA NO DISPONIBLE» al presionar [G]** | `DeliveryManager` era `nil` en cliente por replicación asíncrona tardía de módulos. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau)<br>[DeliveryManager.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DeliveryManager.luau) | Lazy recovery bajo demanda al presionar [G] y fallback automático de helipuertos. | [§11](#11-corrección-definitiva-error) |
+| **Créditos no se sumaban en leaderstats** | Discrepancia en nombre de divisa (`PELAOCOINS` vs `PIGICOINS` vs `CyberCréditos`). | [Main.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/Main.server.luau) | Búsqueda desacoplada por tipo (`IntValue` de leaderstats) tolerante a nombres de moneda. | [§12](#12-desacople-del-nombre-de-la-moneda) |
+| **Cámara FPV se desalinea o roll excesivo** | Cálculo de inclinación lateral acumulaba pitch y yaw sin estabilización giroscópica. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Giro con mouse en `FlightYaw`/`Pitch` y estabilización automática de balanceo en reposo. | [§13](#13-pulido-de-primera-persona-fpv) |
+| **Radar en HUD no detectaba enemigos lejanos** | Radio máximo de radar en 250 studs (Torre A está a 257 studs de Base). | [DroneHUD.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneHUD.luau) | Ampliación de alcance a 320 studs y acentos de color neón ámbar/rojo de alta salencia. | [§20](#20-auditoría-y-corrección-de-visibilidad) |
+
+---
+
+## 📑 Tabla de Contenidos Completa
 1. [Resumen Ejecutivo](#1-resumen-ejecutivo)
 2. [Error Crítico 1: El Dron solo sube y no puede descender (Sign Inversion Bug)](#2-error-crítico-1-el-dron-solo-sube-y-no-puede-descender)
 3. [Error Crítico 2: Bloqueo de Carga y Tecla [E] Inoperativa (Top-Level Requires Hang)](#3-error-crítico-2-bloqueo-de-carga-y-tecla-e-inoperativa)
@@ -14,6 +35,23 @@
 5. [Error Crítico 4: Conflicto de Físicas y Network Ownership (HumanoidRootPart Anchoring)](#5-error-crítico-4-conflicto-de-físicas-y-network-ownership)
 6. [Mejoras de Conducción, Físicas y Mapeo de Controles](#6-mejoras-de-conducción-físicas-y-mapeo-de-controles)
 7. [Matriz de Estado y Diagnóstico de Archivos](#7-matriz-de-estado-y-diagnóstico-de-archivos)
+8. [Fase de Seguridad y Arquitectura Server-Side (v4.1)](#8-fase-de-seguridad-y-arquitectura-server-side-v41)
+9. [Fase 2: Catálogo de Drones, Arsenal Táctico, IA Enemiga 3D y Físicas de Inercia](#9-fase-2-catálogo-de-drones-arsenal-táctico-ia-enemiga-3d-y-físicas-de-inercia)
+10. [Optimización de Helipuertos y Sistema de Desenganche Físico de Entrega con Tecla [G]](#10-optimización-de-helipuertos-y-sistema-de-desenganche-físico-de-entrega-con-tecla-g)
+11. [Corrección Definitiva: Error «SISTEMA DE ENTREGA NO DISPONIBLE» y Resiliencia de Red](#11-corrección-definitiva-error-sistema-de-entrega-no-disponible-y-resiliencia-de-red)
+12. [Desacople del Nombre de la Moneda («PIGICOINS») y Resiliencia en Validación Server-Side](#12-desacople-del-nombre-de-la-moneda-pigicoins-y-resiliencia-en-validación-server-side)
+13. [Pulido de Primera Persona (FPV) con Giro de Mouse y Corrección Aerodinámica de Inclinación Lateral (Roll)](#13-pulido-de-primera-persona-fpv-con-giro-de-mouse-y-corrección-aerodinámica-de-inclinación-lateral-roll)
+14. [Sistema Logístico de Bodega (3 Paquetes), Ciclo de Reabastecimiento en Base Central y Tolvas Receptoras en Torres](#14-sistema-logístico-de-bodega-3-paquetes-ciclo-de-reabastecimiento-en-base-central-y-tolvas-receptoras-en-torres)
+15. [Fase 1 Enriquecida: Red de Rutas con Niveles de Amenaza, Despacho Táctico y Multiplicador de Rachas (Delivery Streak)](#15-fase-1-enriquecida-red-de-rutas-con-niveles-de-amenaza-despacho-táctico-y-multiplicador-de-rachas-delivery-streak)
+16. [Fase 2 Enriquecida: Orquestación Espacial de IA, Particionado por Zonas y Director de Amenaza Dinámico (Threat Director)](#16-fase-2-enriquecida-orquestación-espacial-de-ia-particionado-por-zonas-y-director-de-amenaza-dinámico-threat-director)
+17. [Fase 3: Arsenal Táctico del Jugador, Cañón de Plasma, Contramedida EMP y Recompensas (Bounties)](#17-fase-3-arsenal-táctico-del-jugador-cañón-de-plasma-contramedida-emp-y-recompensas-bounties)
+18. [Fase 4: Telemetría HUD Avanzada, Barras de Núcleo (HP/Heat), Radar Táctico 360° y Viñeta de Daño](#18-fase-4-telemetría-hud-avanzada-barras-de-núcleo-hpheat-radar-táctico-360-y-viñeta-de-daño)
+19. [Fase 5: Rutas Dinámicas, Pérdida de Carga Física por Daño Crítico y Progresión de Rango](#19-fase-5-rutas-dinámicas-pérdida-de-carga-física-por-daño-crítico-y-progresión-de-rango)
+20. [Auditoría y Corrección de Visibilidad, Físicas y Patrulla de IA Hostil](#20-auditoría-y-corrección-de-visibilidad-físicas-y-patrulla-de-ia-hostil)
+21. [Auditoría Integral Multi-Fase: Causa Raíz de Desaparición de Enemigos y Solución Arquitectónica Definitiva](#21-auditoría-integral-multi-fase-causa-raíz-de-desaparición-de-enemigos-y-solución-arquitectónica-definitiva)
+22. [Causa Raíz Oculta: Error Fatal de Sintaxis de Luau VM (`Table.Field: Type =`)](#22-causa-raíz-oculta-error-fatal-de-sintaxis-de-luau-vm-tablefield-type-)
+23. [Pulido Dinámico de Combate y Ataques de Drones Hostiles](#23-pulido-dinámico-de-combate-y-ataques-de-drones-hostiles)
+24. [Reabastecimiento Instantáneo de Bodega en Base Central (Triple Capa)](#24-reabastecimiento-instantáneo-de-bodega-en-base-central-triple-capa)
 
 ---
 
@@ -684,7 +722,61 @@ En el lenguaje Luau (Roblox), la asignación de campos en una tabla **no admite 
    Se incorporó un cuarto Scav-Gnat en `Zone_TorreA` ubicado en el vector intermedio `(95, 65, -115)` (a 163 studs de la Base), permitiendo que el jugador observe una nave patrullando en el horizonte aéreo inmediatamente al despegar.
 
 ---
-*Fin del documento de auditoría técnica del Plan Maestro y Sistema de Hostilidad.*
+
+## 23. Pulido Dinámico de Combate y Ataques de Drones Hostiles
+
+### 🔍 Diagnóstico de Ataque Inicial
+1. **Scav-Gnats (Enjambre Chatarrero - Torre A):**
+   * El umbral de contacto físico estaba limitado a `dist <= 6` studs. Con una frecuencia de IA de 10 Hz ($\Delta t = 0.1\text{s}$) y naves a 45–50 studs/s, los drones cruzaban de 4 a 9 studs por fotograma de cálculo, provocando que colisiones a alta velocidad no registraran embestida.
+   * Tras chocar, el gnat permanecía pegado al chasis del jugador sin retroceso, sin feedback de audio y con aceleración plana.
+2. **Torreta Aegis-44 (Cornisa Torre B):**
+   * Disparo sin telegrafiado visual: el jugador recibía daño repentino sin advertencia anticipada.
+   * Falta de efectos de boca de cañón (*muzzle flash*), retroceso sonoro e impacto cinético.
+3. **Interceptor Kuroshio-V (Alta Altitud Torre B):**
+   * El pulso de microondas carecía de resonancia acústica y definición volumétrica (haz plano único), reduciendo la inmersión del combate espacial.
+
+### 🛠️ Soluciones y Mejoras de Combate Aplicadas
+1. **Scav-Gnats — Picado Aéreo y Colisión Contundente:**
+   * **Umbral de Impacto:** Ampliado a **11 studs** para garantizar captura a 10 Hz sin falsos negativos.
+   * **Picado Aéreo en Aceleración (Dive-Bomb):** Al aproximarse a $\le 70$ studs del objetivo, la velocidad máxima se eleva a **68 studs/s**, orientando el morro y alerones en 3D directo al vector del jugador e intensificando las partículas del propulsor (`Rate = 80`, `Speed = 16-28`).
+   * **Retroceso Físico (Recoil Bounce):** Tras el impacto, el gnat recibe una fuerza de rebote inversa:
+     $$\mathbf{v}_{\text{gnat}} = -\hat{\mathbf{d}} \times 32 + (0, 10, 0)$$
+     evitando que atraviese el chasis del jugador.
+   * **SFX y FX:** Sonido de impacto metálico pesado (`rbxassetid://9114221580`), destello de choque de 3.5 studs y 180 partículas de chispa a 25–35 studs/s.
+2. **Torreta Aegis-44 — Telémetro Carmesí y Cañón Gauss Pesado:**
+   * **Pre-fijado Láser Diegético:** Al detectar y rastrear al jugador, la mira láser cambia de ámbar tenue (`#FFB400`) a **rojo carmesí brillante (`#FF1E1E`)**, con grosor aumentado a 0.35 studs, alertando al piloto para evadir o buscar cobertura.
+   * **Detonación Gauss y SFX:** Audio de cañón de riel pesado (`rbxassetid://9114223400`), destello de boca de cañón esférico (*Muzzle Flare*) de 2.8 studs y trazador cinético dual con núcleo incandescente blanco (`#FFFFDC`).
+   * **Fuerza de Impacto:** Aplica 22 HP de daño y un impulso cinético horizontal de $+32\text{ N}$ que desestabiliza temporalmente el vuelo del jugador.
+3. **Kuroshio-V — Haz Dual de Microondas y Descarga Electrostática:**
+   * **Sonido de Descarga:** Audio de microondas de alta frecuencia (`rbxassetid://9114223170`).
+   * **Haz Dual Volumétrico:** Vaina de contención de plasma violeta (`#B400FF`) de 0.6 studs con núcleo eléctrico cian neón (`#00F0FF`) de 0.25 studs.
+   * **Daño Híbrido:** Inyecta $+16$ de calor al núcleo del dron (acelerando el umbral de parada EMP) y $-8\text{ HP}$ directos con chispas de arco voltaico en el casco.
+
+---
+
+## 24. Reabastecimiento Instantáneo de Bodega en Base Central (Triple Capa)
+
+### 🔍 Diagnóstico de la Falla de Reabastecimiento
+Al quedarse sin paquetes en bodega (por entregas sucesivas o por pérdida física por daño crítico), los jugadores no podían recargar nuevos paquetes en la Base Central debido a tres factores concurrentes:
+1. **Split-Brain de RemoteEvents (`NetworkEvents.luau`):**
+   `NetworkEvents.Init()` creaba un `RemoteEvent` duplicado en la raíz de `ReplicatedStorage` mientras que el servidor escuchaba exclusivamente en `CyberNetworkEvents`. El cliente disparaba `DeliveryCompleted` en una instancia desconectada, por lo que el servidor nunca respondía con `DeliveryConfirmed`.
+2. **Bloqueo de Estado `isLanded`:**
+   En `DeliveryManager.luau`, si el dron ya se encontraba sobre la plataforma de la Base (`isLanded == true`) cuando se perdían los paquetes, el temporizador de aterrizaje no volvía a dispararse, impidiendo que el cliente intentara un nuevo reclamo.
+3. **Dependencia Exclusiva de Confirmación de Red:**
+   `DroneCargo:RestockAtBase()` únicamente se ejecutaba tras recibir el paquete de confirmación del servidor. Si había latencia, descarte de paquete o rechazo por temporizador anti-spam (2s), los 3 paquetes nunca se cargaban en el dron.
+
+### 🛠️ Solución de Arquitectura: Reabastecimiento de Triple Capa
+Se rediseñó el flujo para proveer tres mecanismos independientes y redundantes de abastecimiento:
+1. **Capa 1 — Touchdown Automático de Reactividad Inmediata (`DeliveryManager.luau`):**
+   * Al descender sobre la Base Central (`Pad_Base`), si `packagesRemaining < 3`, la bodega se recarga a 3/3 localmente en el instante de contacto ($0.60\text{s}$), actualizando el modelo 3D, masa de carga y HUD, mientras en paralelo se notifica al servidor para acreditar la recompensa de ruta.
+   * En `NotifyCargoLost()`, se resetea automáticamente `self.isLanded = false` y `self.touchdownTimer = 0`, permitiendo un re-enganche inmediato.
+2. **Capa 2 — Reabastecimiento Manual con Tecla [G] (`TryManualDeliver`):**
+   * Si el jugador se sitúa en un radio holgado de hasta 42 studs de la Base Central `(0, 4, 0)` y presiona `[G]`, el sistema reabastece instantáneamente los 3 paquetes con sonido de hangar, actualiza el destino logístico y muestra en HUD: `¡Bodega reabastecida al 100%! 3 paquetes disponibles`.
+3. **Capa 3 — Salvaguarda Automática al Despegar (`DroneController.StartFlying`):**
+   * Al activar el enlace de vuelo (`[E]`) o retomar el control dentro de los 45 studs de la Base Central con menos de 3 paquetes en inventario, `StartFlying()` invoca automáticamente `RestockAtBase()`, garantizando que **ningún piloto pueda despegar de su base de operaciones con la bodega vacía**.
+
+---
+*Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 
 

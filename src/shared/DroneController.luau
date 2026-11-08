@@ -422,6 +422,31 @@ function DroneController:StartFlying()
 		end
 	end
 
+	-- Auto-recarga garantizada en despegue de Base Central:
+	local baseDist = (Vector3.new(self.rootPart.Position.X, 0, self.rootPart.Position.Z) - Vector3.new(0, 0, 0)).Magnitude
+	if baseDist <= 45 then
+		local currentCargoCount = if self.cargo and (self.cargo :: any).GetPackageCount then (self.cargo :: any):GetPackageCount() else 0
+		local dmPkgs = if self.deliveryManager and (self.deliveryManager :: any).GetPackagesRemaining then (self.deliveryManager :: any):GetPackagesRemaining() else 0
+		if currentCargoCount < 3 or dmPkgs < 3 then
+			print(string.format("[DroneController] Despegando de Base Central con bodega incompleta (Cargo:%d, DM:%d). ¡Auto-reabasteciendo a 3/3!", currentCargoCount, dmPkgs))
+			if self.cargo and (self.cargo :: any).RestockAtBase then
+				(self.cargo :: any):RestockAtBase()
+			end
+			if self.deliveryManager then
+				(self.deliveryManager :: any).packagesRemaining = 3
+				(self.deliveryManager :: any).originPadName = "Pad_Base"
+				if (self.deliveryManager :: any).PickNextTarget then
+					(self.deliveryManager :: any):PickNextTarget("Pad_Base")
+				end
+			end
+			if self.hud and (self.hud :: any).ShowHint then
+				pcall(function()
+					(self.hud :: any):ShowHint("¡BODEGA REABASTECIDA (3/3 PAQUETES)!", false)
+				end)
+			end
+		end
+	end
+
 	-- Vincular inputs de vuelo
 	self:BindInputs()
 

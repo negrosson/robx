@@ -32,64 +32,51 @@ function NetworkEvents.Init(): Folder
 	end
 
 	for _, eventName in pairs(NetworkEvents.Names) do
-		-- Evento en carpeta dedicada
+		-- Buscar si ya existe en ReplicatedStorage o en folder para no duplicar instancias
 		local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
+		if not ev then
+			ev = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
+		end
+
 		if not ev then
 			ev = Instance.new("RemoteEvent")
 			ev.Name = eventName
 			ev.Parent = folder
-		end
-
-		-- Evento espejo en la raíz de ReplicatedStorage para compatibilidad con código existente
-		local rootEv = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
-		if not rootEv then
-			local alias = Instance.new("RemoteEvent")
-			alias.Name = eventName
-			alias.Parent = ReplicatedStorage
 		end
 	end
 
 	return folder
 end
 
--- Obtiene un RemoteEvent de forma segura (funciona en Cliente y Servidor)
+-- Obtiene un RemoteEvent de forma segura garantizando la misma instancia canónica
 function NetworkEvents.Get(eventName: string): RemoteEvent
-	if RunService:IsServer() then
-		local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME) :: Folder?
-		if not folder then
-			folder = NetworkEvents.Init()
-		end
-		local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
-		if not ev then
-			ev = Instance.new("RemoteEvent")
-			ev.Name = eventName
-			ev.Parent = folder
-		end
-		return ev
-	else
-		-- 1. Buscar en CyberNetworkEvents (inmediato si ya está disponible)
-		local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME) :: Folder?
-		if not folder then
-			folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 5) :: Folder?
-		end
-
-		if folder then
-			local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
-			if not ev then
-				ev = folder:WaitForChild(eventName, 4) :: RemoteEvent?
-			end
-			if ev then return ev end
-		end
-
-		-- 2. Fallback a la raíz de ReplicatedStorage
-		local rootEv = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
-		if not rootEv then
-			rootEv = ReplicatedStorage:WaitForChild(eventName, 4) :: RemoteEvent?
-		end
-		if rootEv then return rootEv end
-
-		error(string.format("[NetworkEvents] No se pudo encontrar el RemoteEvent '%s'", eventName))
+	local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME) :: Folder?
+	if not folder and RunService:IsServer() then
+		folder = NetworkEvents.Init()
+	elseif not folder then
+		folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 6) :: Folder?
 	end
+
+	local ev: RemoteEvent? = nil
+	if folder then
+		ev = folder:FindFirstChild(eventName) :: RemoteEvent?
+	end
+	if not ev then
+		ev = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
+	end
+
+	if not ev and RunService:IsServer() then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = eventName
+		ev.Parent = folder or ReplicatedStorage
+	elseif not ev and folder then
+		ev = folder:WaitForChild(eventName, 6) :: RemoteEvent?
+	end
+	if not ev then
+		ev = ReplicatedStorage:WaitForChild(eventName, 6) :: RemoteEvent?
+	end
+
+	return ev :: RemoteEvent
 end
 
 return NetworkEvents

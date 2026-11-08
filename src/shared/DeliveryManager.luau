@@ -452,10 +452,18 @@ function DeliveryManager.CheckPadZone(
 	if currentTgt then
 		local hDist = Vector3.new(dronePosition.X - currentTgt.basePadPosition.X, 0, dronePosition.Z - currentTgt.basePadPosition.Z).Magnitude
 		local vDiff = dronePosition.Y - currentTgt.basePadPosition.Y
-		if hDist <= MAX_HORIZ_DIST and vDiff >= MIN_VERT_DIFF and vDiff <= MAX_VERT_DIFF then
+		local maxH = if currentTgt.name == "Pad_Base" then 36 else MAX_HORIZ_DIST
+		local minV = if currentTgt.name == "Pad_Base" then -6 else MIN_VERT_DIFF
+		local maxV = if currentTgt.name == "Pad_Base" then 26 else MAX_VERT_DIFF
+
+		if hDist <= maxH and vDiff >= minV and vDiff <= maxV then
 			-- Si el objetivo es la Base para reabastecer:
 			if currentTgt.name == "Pad_Base" then
-				return true, currentTgt, currentTgt.reward, nil
+				if self.packagesRemaining < self.maxPackages then
+					return true, currentTgt, currentTgt.reward, nil
+				else
+					return false, currentTgt, 0, "Bodega completa (3/3 paquetes). Vuela hacia tu objetivo"
+				end
 			else
 				-- Si es una torre y tenemos paquetes:
 				if self.packagesRemaining > 0 then
@@ -471,13 +479,16 @@ function DeliveryManager.CheckPadZone(
 	for _, tgt in ipairs(self.targets) do
 		local horizDist = Vector3.new(dronePosition.X - tgt.basePadPosition.X, 0, dronePosition.Z - tgt.basePadPosition.Z).Magnitude
 		local vertDiff = dronePosition.Y - tgt.basePadPosition.Y
+		local maxH = if tgt.name == "Pad_Base" then 36 else MAX_HORIZ_DIST
+		local minV = if tgt.name == "Pad_Base" then -6 else MIN_VERT_DIFF
+		local maxV = if tgt.name == "Pad_Base" then 26 else MAX_VERT_DIFF
 
 		if horizDist < closestDist then
 			closestDist = horizDist
 			closestTarget = tgt
 		end
 
-		if horizDist <= MAX_HORIZ_DIST and vertDiff >= MIN_VERT_DIFF and vertDiff <= MAX_VERT_DIFF then
+		if horizDist <= maxH and vertDiff >= minV and vertDiff <= maxV then
 			-- Caso Base: si está en Base y no tiene carga completa, siempre permitir reabastecer
 			if tgt.name == "Pad_Base" then
 				if self.packagesRemaining < self.maxPackages then
@@ -531,6 +542,18 @@ function DeliveryManager.Update(
 
 		if progress >= 1 and not self.isLanded then
 			self.isLanded = true
+
+			-- Si estamos aterrizando en Base Central y nos falta carga, reabastecer inmediatamente en cliente
+			if target.name == "Pad_Base" and self.packagesRemaining < self.maxPackages then
+				print(string.format("[DeliveryManager] Reabastecimiento automático en touchdown de Base Central (%d -> 3).", self.packagesRemaining))
+				self.packagesRemaining = self.maxPackages
+				self.originPadName = "Pad_Base"
+				if self.onDeliveryCallback then
+					self.onDeliveryCallback(100, "Base", self.deliveryStreak, self.streakMultiplier)
+				end
+				self:PickNextTarget("Pad_Base")
+			end
+
 			self:CompleteDelivery(target.name)
 			return true, 1
 		end
@@ -544,10 +567,44 @@ function DeliveryManager.Update(
 end
 
 function DeliveryManager.TryManualDeliver(self: ManagerInstance, dronePosition: Vector3, droneVelocity: Vector3): (boolean, string?)
+	-- Comprobación de proximidad a Base Central holgada (hasta 42 studs) para reabastecimiento manual garantizado
+	local baseDist = Vector3.new(dronePosition.X, 0, dronePosition.Z).Magnitude
+	local baseVert = dronePosition.Y - 4.0
+	if baseDist <= 42 and baseVert >= -8 and baseVert <= 30 then
+		if self.packagesRemaining < self.maxPackages then
+			print(string.format("[DeliveryManager] ¡Reabastecimiento manual [G] en Base Central! (%d -> %d paquetes)", self.packagesRemaining, self.maxPackages))
+			self.packagesRemaining = self.maxPackages
+			self.originPadName = "Pad_Base"
+			if self.onDeliveryCallback then
+				self.onDeliveryCallback(100, "Base", self.deliveryStreak, self.streakMultiplier)
+			end
+			self:CompleteDelivery("Pad_Base")
+			self:PickNextTarget("Pad_Base")
+			return true, "¡Bodega reabastecida al 100%! 3 paquetes disponibles."
+		else
+			return false, "Tu bodega ya está al 100% (3/3 paquetes). Vuela hacia tu objetivo."
+		end
+	end
+
 	local inZone, target, _, hint = self:CheckPadZone(dronePosition, droneVelocity)
 	if inZone and target then
 		local isBase = (target.name == "Pad_Base")
-		local actionMsg = if isBase then "¡Reabasteciendo bodega en Base Central!" else string.format("¡Entregando en %s!", target.displayName)
+		if isBase then
+			if self.packagesRemaining < self.maxPackages then
+				self.packagesRemaining = self.maxPackages
+				self.originPadName = "Pad_Base"
+				if self.onDeliveryCallback then
+					self.onDeliveryCallback(100, "Base", self.deliveryStreak, self.streakMultiplier)
+				end
+				self:CompleteDelivery("Pad_Base")
+				self:PickNextTarget("Pad_Base")
+				return true, "¡Bodega reabastecida al 100%! 3 paquetes disponibles."
+			else
+				return false, "Tu bodega ya está al 100% (3/3 paquetes)."
+			end
+		end
+
+		local actionMsg = string.format("¡Entregando en %s!", target.displayName)
 		print(string.format("[DeliveryManager] Operación manual [G] en %s: %s", target.displayName, actionMsg))
 		self:CompleteDelivery(target.name)
 		return true, actionMsg
@@ -577,6 +634,8 @@ end
 
 function DeliveryManager.NotifyCargoLost(self: ManagerInstance, remainingCount: number)
 	self.packagesRemaining = math.max(0, remainingCount)
+	self.isLanded = false
+	self.touchdownTimer = 0
 	if self.packagesRemaining <= 0 then
 		print("[DeliveryManager] ¡Carga perdida por impactos! Re-enrutando obligatoriamente a Base Central.")
 		self:PickNextTarget("")

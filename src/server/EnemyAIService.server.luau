@@ -363,42 +363,68 @@ local function handleRamming(agent: EnemyAgent)
 	if now - agent.lastRamTime < RAMMING_COOLDOWN then return end
 
 	local dist = (agent.part.Position - agent.targetPart.Position).Magnitude
-	if dist > 6 then return end  -- solo embestir en contacto cercano
+	if dist > 11 then return end  -- Radio de contacto ampliado a 11 studs para registro consistente a 10 Hz
 
 	agent.lastRamTime = now
 
 	-- Aplicar impulso físico al dron del jugador (desestabilización aerodinámica)
 	local impactDir = (agent.targetPart.Position - agent.part.Position).Unit
-	agent.targetPart.AssemblyLinearVelocity += impactDir * agent.spec.rammingImpulse
+	agent.targetPart.AssemblyLinearVelocity += impactDir * (agent.spec.rammingImpulse or 55)
 
-	-- Partículas de chispas en el dron embestido
+	-- Rebote físico de retroceso para el Scav-Gnat (evita que se pegue o traspase)
+	agent.part.AssemblyLinearVelocity = -impactDir * 32 + Vector3.new(0, 10, 0)
+	agent.velocity = -impactDir * 22
+
+	-- Sonido metálico de colisión/impacto contundente
+	local ramSound = Instance.new("Sound")
+	ramSound.SoundId = "rbxassetid://9114221580"
+	ramSound.Volume = 1.8
+	ramSound.PlaybackSpeed = math.random(95, 110) / 100
+	ramSound.RollOffMaxDistance = 180
+	ramSound.Parent = agent.part
+	ramSound:Play()
+	Debris:AddItem(ramSound, 2)
+
+	-- Destello de impacto y chispas
+	local sparkPos = (agent.part.Position + agent.targetPart.Position) / 2
 	local sparkPart = Instance.new("Part")
 	sparkPart.Size = Vector3.new(1, 1, 1)
-	sparkPart.Position = (agent.part.Position + agent.targetPart.Position) / 2
+	sparkPart.Position = sparkPos
 	sparkPart.Transparency = 1
 	sparkPart.Anchored = true
 	sparkPart.CanCollide = false
 	sparkPart.Parent = Workspace
 
+	local flash = Instance.new("Part")
+	flash.Shape = Enum.PartType.Ball
+	flash.Size = Vector3.new(3.5, 3.5, 3.5)
+	flash.Position = sparkPos
+	flash.Material = Enum.Material.Neon
+	flash.Color = Color3.fromRGB(255, 140, 20)
+	flash.Anchored = true
+	flash.CanCollide = false
+	flash.Parent = Workspace
+	Debris:AddItem(flash, 0.10)
+
 	local pe = Instance.new("ParticleEmitter")
-	pe.Color = ColorSequence.new(Color3.fromRGB(255, 100, 30))
-	pe.Size = NumberSequence.new(0.5, 0)
-	pe.Lifetime = NumberRange.new(0.2, 0.35)
-	pe.Rate = 120
-	pe.Speed = NumberRange.new(15, 25)
+	pe.Color = ColorSequence.new(Color3.fromRGB(255, 120, 30))
+	pe.Size = NumberSequence.new(0.6, 0)
+	pe.Lifetime = NumberRange.new(0.2, 0.4)
+	pe.Rate = 180
+	pe.Speed = NumberRange.new(20, 35)
 	pe.SpreadAngle = Vector2.new(180, 180)
 	pe.Parent = sparkPart
-	task.delay(0.15, function()
+	task.delay(0.18, function()
 		if pe and pe.Parent then pe.Enabled = false end
 	end)
 	Debris:AddItem(sparkPart, 0.6)
 
 	-- Registrar daño en CombatService con vector de procedencia
 	if _G.CombatService and _G.CombatService.ApplyDamage then
-		_G.CombatService.ApplyDamage(agent.targetPart, 14, nil, agent.part.Position)
+		_G.CombatService.ApplyDamage(agent.targetPart, 14, { name = "Embestida Scav-Gnat" }, nil, agent.part.Position)
 	end
 
-	print(string.format("[EnemyAIService] %s embistió al jugador (%.0f N | -14 HP)", agent.spec.name, agent.spec.rammingImpulse))
+	print(string.format("[EnemyAIService] ¡IMPACTO! %s embistió al jugador (%.0f N | -14 HP)", agent.spec.name, agent.spec.rammingImpulse))
 end
 
 ----------------------------------------------------------------------
@@ -412,8 +438,6 @@ local function handleFiring(agent: EnemyAgent)
 	local dist = (agent.part.Position - agent.targetPart.Position).Magnitude
 	if dist > agent.spec.fireRange then return end
 
-	agent.lastFireTime = now
-
 	-- Verificar línea de visión básica
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -422,47 +446,130 @@ local function handleFiring(agent: EnemyAgent)
 	local direction = agent.targetPart.Position - agent.part.Position
 	local result = Workspace:Raycast(agent.part.Position, direction, params)
 
-	local hasLOS = not result or result.Instance == agent.targetPart
+	local hasLOS = not result or result.Instance == agent.targetPart or (result.Instance and result.Instance:IsDescendantOf(agent.targetPart.Parent))
 	if not hasLOS then return end
+
+	agent.lastFireTime = now
 
 	-- Delegar daño al CombatService y renderizar proyectil visual
 	if agent.spec.burstWeapon == "synapse_overheat" then
-		-- Kuroshio: Haz de microondas violeta continuo/pulsado
+		-- Kuroshio-V: Haz dual de microondas ionizadas violeta/cian con audio
+		local humSound = Instance.new("Sound")
+		humSound.SoundId = "rbxassetid://9114223170"
+		humSound.Volume = 1.5
+		humSound.PlaybackSpeed = 1.15
+		humSound.RollOffMaxDistance = 220
+		humSound.Parent = agent.part
+		humSound:Play()
+		Debris:AddItem(humSound, 2)
+
+		-- Haz exterior violeta
 		local pulse = Instance.new("Part")
 		pulse.Name = "MicrowavePulse"
-		pulse.Size = Vector3.new(0.4, 0.4, dist)
+		pulse.Size = Vector3.new(0.6, 0.6, dist)
 		pulse.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
 		pulse.Anchored = true
 		pulse.CanCollide = false
 		pulse.Material = Enum.Material.Neon
 		pulse.Color = Color3.fromRGB(180, 0, 255)
-		pulse.Transparency = 0.3
+		pulse.Transparency = 0.25
 		pulse.Parent = Workspace
 		Debris:AddItem(pulse, 0.22)
 
+		-- Núcleo interior cian brillante
+		local core = Instance.new("Part")
+		core.Name = "MicrowaveCore"
+		core.Size = Vector3.new(0.25, 0.25, dist)
+		core.CFrame = pulse.CFrame
+		core.Anchored = true
+		core.CanCollide = false
+		core.Material = Enum.Material.Neon
+		core.Color = Color3.fromRGB(0, 240, 255)
+		core.Transparency = 0.05
+		core.Parent = Workspace
+		Debris:AddItem(core, 0.20)
+
+		-- Chispas electromagnéticas en la posición del objetivo
+		local sparkPart = Instance.new("Part")
+		sparkPart.Size = Vector3.new(0.5, 0.5, 0.5)
+		sparkPart.Position = agent.targetPart.Position
+		sparkPart.Transparency = 1
+		sparkPart.Anchored = true
+		sparkPart.CanCollide = false
+		sparkPart.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(Color3.fromRGB(200, 50, 255))
+		pe.Size = NumberSequence.new(0.4, 0)
+		pe.Lifetime = NumberRange.new(0.15, 0.25)
+		pe.Rate = 90
+		pe.Speed = NumberRange.new(10, 20)
+		pe.Parent = sparkPart
+		task.delay(0.15, function() if pe and pe.Parent then pe.Enabled = false end end)
+		Debris:AddItem(sparkPart, 0.5)
+
 		if _G.CombatService and _G.CombatService.ApplyHeat then
-			_G.CombatService.ApplyHeat(agent.targetPart, 14)
+			_G.CombatService.ApplyHeat(agent.targetPart, 16)
 		end
-		print(string.format("[EnemyAIService] %s inyectó microondas térmicas (+14 calor)", agent.spec.name))
+		if _G.CombatService and _G.CombatService.ApplyDamage then
+			_G.CombatService.ApplyDamage(agent.targetPart, 8, { name = "Microondas Kuroshio-V" }, nil, agent.part.Position)
+		end
+		print(string.format("[EnemyAIService] %s descargó microondas (+16 calor | -8 HP)", agent.spec.name))
 
 	elseif agent.spec.burstWeapon == "rail_driver" then
-		-- Aegis: Trazador cinético Gauss dorado de alta velocidad
+		-- Aegis-44: Cañón Gauss Cinético de Cornisa con Muzzle Flash, SFX pesado y retroceso
+		local railSound = Instance.new("Sound")
+		railSound.SoundId = "rbxassetid://9114223400"
+		railSound.Volume = 2.2
+		railSound.PlaybackSpeed = 0.92
+		railSound.RollOffMaxDistance = 320
+		railSound.Parent = agent.part
+		railSound:Play()
+		Debris:AddItem(railSound, 2.5)
+
+		-- Muzzle Flash y destello expansivo en el cañón
+		local muzzlePos = agent.part.CFrame * CFrame.new(0, 0, -3.2)
+		local muzzleFlare = Instance.new("Part")
+		muzzleFlare.Shape = Enum.PartType.Ball
+		muzzleFlare.Size = Vector3.new(2.8, 2.8, 2.8)
+		muzzleFlare.Position = muzzlePos.Position
+		muzzleFlare.Material = Enum.Material.Neon
+		muzzleFlare.Color = Color3.fromRGB(255, 220, 100)
+		muzzleFlare.Anchored = true
+		muzzleFlare.CanCollide = false
+		muzzleFlare.Parent = Workspace
+		Debris:AddItem(muzzleFlare, 0.12)
+
+		-- Trazador Gauss cinético de alta energía
 		local tracer = Instance.new("Part")
 		tracer.Name = "GaussTracer"
-		tracer.Size = Vector3.new(0.6, 0.6, dist)
+		tracer.Size = Vector3.new(0.75, 0.75, dist)
 		tracer.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
 		tracer.Anchored = true
 		tracer.CanCollide = false
 		tracer.Material = Enum.Material.Neon
-		tracer.Color = Color3.fromRGB(255, 180, 0)
-		tracer.Transparency = 0.15
+		tracer.Color = Color3.fromRGB(255, 170, 0)
+		tracer.Transparency = 0.1
 		tracer.Parent = Workspace
-		Debris:AddItem(tracer, 0.15)
+		Debris:AddItem(tracer, 0.18)
+
+		-- Núcleo del trazador blanco incandescente
+		local tracerCore = Instance.new("Part")
+		tracerCore.Size = Vector3.new(0.3, 0.3, dist)
+		tracerCore.CFrame = tracer.CFrame
+		tracerCore.Anchored = true
+		tracerCore.CanCollide = false
+		tracerCore.Material = Enum.Material.Neon
+		tracerCore.Color = Color3.fromRGB(255, 255, 220)
+		tracerCore.Parent = Workspace
+		Debris:AddItem(tracerCore, 0.16)
+
+		-- Impacto cinético en el dron del jugador
+		agent.targetPart.AssemblyLinearVelocity += direction.Unit * 32
 
 		if _G.CombatService and _G.CombatService.ApplyDamage then
-			_G.CombatService.ApplyDamage(agent.targetPart, 22, nil, agent.part.Position)
+			_G.CombatService.ApplyDamage(agent.targetPart, 22, { name = "Torreta Gauss Aegis-44" }, nil, agent.part.Position)
 		end
-		print(string.format("[EnemyAIService] %s disparó Rail-Driver Gauss (-22 HP)", agent.spec.name))
+		print(string.format("[EnemyAIService] %s detonó Rail-Driver Gauss (-22 HP | 32 N)", agent.spec.name))
 	end
 end
 
@@ -525,8 +632,19 @@ RunService.Heartbeat:Connect(function(dt: number)
 
 		if mode == "ramming" then
 			if agent.targetPart then
+				local distToPlayer = (part.Position - agent.targetPart.Position).Magnitude
+				local diveSpeed = if distToPlayer <= 70 then 68 else agent.spec.maxSpeed
+
+				-- Acelerar estela de propulsión durante el picado aéreo
+				local thrusterAtt = part:FindFirstChild("ThrusterAtt")
+				local thruster = if thrusterAtt then thrusterAtt:FindFirstChild("ThrusterTrail") :: ParticleEmitter? else nil
+				if thruster then
+					thruster.Rate = if distToPlayer <= 70 then 80 else 25
+					thruster.Speed = if distToPlayer <= 70 then NumberRange.new(16, 28) else NumberRange.new(5, 12)
+				end
+
 				-- Seek agresivo hacia el dron del jugador + separación enjambre (flocking)
-				local seekV = seek(part.Position, agent.targetPart.Position, agent.spec.maxSpeed)
+				local seekV = seek(part.Position, agent.targetPart.Position, diveSpeed)
 				local sepV  = separation(part.Position, gnatParts, 8) * SEPARATION_WEIGHT
 				steerForce  = seekV + sepV
 				handleRamming(agent)
@@ -544,22 +662,30 @@ RunService.Heartbeat:Connect(function(dt: number)
 			end
 
 		elseif mode == "turret" then
+			local laserSight = part:FindFirstChild("LaserSight") :: BasePart?
 			if agent.targetPart then
 				local toTarget = (agent.targetPart.Position - part.Position)
 				if toTarget.Magnitude > 0 then
 					local targetCF = CFrame.lookAt(part.Position, agent.targetPart.Position)
-					part.CFrame = part.CFrame:Lerp(targetCF, 0.20)
+					part.CFrame = part.CFrame:Lerp(targetCF, 0.28)
+				end
+				-- Alerta visual de pre-fijado: haz láser se torna rojo carmesí brillante e intenso
+				if laserSight then
+					laserSight.Color = Color3.fromRGB(255, 30, 30)
+					laserSight.Transparency = 0.15
+					laserSight.Size = Vector3.new(0.35, 0.35, 60)
+					laserSight.CFrame = part.CFrame * CFrame.new(0, 0, -30)
 				end
 				handleFiring(agent)
 			else
 				-- Barrido rotativo suave de vigilancia de 360° en reposo
 				part.CFrame = part.CFrame * CFrame.Angles(0, math.rad(AI_TICK_RATE * 35), 0)
-			end
-
-			-- Sincronizar haz láser de la torreta
-			local laserSight = part:FindFirstChild("LaserSight") :: BasePart?
-			if laserSight then
-				laserSight.CFrame = part.CFrame * CFrame.new(0, 0, -30)
+				if laserSight then
+					laserSight.Color = Color3.fromRGB(255, 180, 0)
+					laserSight.Transparency = 0.50
+					laserSight.Size = Vector3.new(0.2, 0.2, 50)
+					laserSight.CFrame = part.CFrame * CFrame.new(0, 0, -25)
+				end
 			end
 			steerForce = Vector3.zero
 
@@ -609,19 +735,28 @@ RunService.Heartbeat:Connect(function(dt: number)
 			-- Integrar steering hacia velocidad actual con inercia
 			agent.velocity = agent.velocity:Lerp(steerForce, math.clamp(AI_TICK_RATE * 3, 0, 1))
 
-			-- Limitar a velocidad máxima
-			if agent.velocity.Magnitude > agent.spec.maxSpeed then
-				agent.velocity = agent.velocity.Unit * agent.spec.maxSpeed
+			-- Limitar a velocidad máxima (con soporte de picado dinámico para Scav-Gnats)
+			local effectiveMaxSpeed = agent.spec.maxSpeed
+			if mode == "ramming" and agent.targetPart then
+				local distToPlayer = (part.Position - agent.targetPart.Position).Magnitude
+				if distToPlayer <= 70 then
+					effectiveMaxSpeed = 68
+				end
+			end
+
+			if agent.velocity.Magnitude > effectiveMaxSpeed then
+				agent.velocity = agent.velocity.Unit * effectiveMaxSpeed
 			end
 
 			agent.linearVelocity.VectorVelocity = agent.velocity
 
-			-- Orientar hacia la dirección de movimiento (si se mueve)
+			-- Orientar hacia la dirección de movimiento o fijar morro en picado hacia el objetivo
 			if agent.velocity.Magnitude > 2 then
-				local flatVel = Vector3.new(agent.velocity.X, 0, agent.velocity.Z)
-				if flatVel.Magnitude > 0.01 then
-					agent.alignOrient.CFrame = CFrame.lookAt(Vector3.zero, flatVel.Unit, Vector3.yAxis)
-				end
+				local lookDir = if (mode == "ramming" and agent.targetPart)
+					then (agent.targetPart.Position - part.Position).Unit
+					else agent.velocity.Unit
+
+				agent.alignOrient.CFrame = CFrame.lookAt(Vector3.zero, lookDir, Vector3.yAxis)
 			end
 		end
 	end

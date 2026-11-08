@@ -276,7 +276,13 @@ end
 
 -- Reabastece completamente la bodega de carga en la Base Central
 function DroneCargo.RestockAtBase(self: CargoInstance): (boolean, number)
-	if self.packagesCount >= self.maxPackages and self.isLoaded then
+	if self.packagesCount >= self.maxPackages
+		and self.isLoaded
+		and #self.packages == self.maxPackages
+		and self.cargoContainer
+		and self.cargoContainer.Parent
+		and #self.cargoContainer:GetChildren() >= self.maxPackages
+	then
 		return false, self.packagesCount
 	end
 
