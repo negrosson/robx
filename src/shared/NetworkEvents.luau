@@ -60,13 +60,17 @@ function NetworkEvents.Get(eventName: string): RemoteEvent
 	if not folder and RunService:IsServer() then
 		folder = NetworkEvents.Init()
 	elseif not folder then
-		folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 6) :: Folder?
+		folder = ReplicatedStorage:WaitForChild(FOLDER_NAME, 4) :: Folder?
 	end
 
 	local ev: RemoteEvent? = nil
 	if folder then
 		ev = folder:FindFirstChild(eventName) :: RemoteEvent?
+		if not ev then
+			ev = folder:WaitForChild(eventName, 2) :: RemoteEvent?
+		end
 	end
+
 	if not ev then
 		ev = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
 	end
@@ -75,11 +79,6 @@ function NetworkEvents.Get(eventName: string): RemoteEvent
 		ev = Instance.new("RemoteEvent")
 		ev.Name = eventName
 		ev.Parent = folder or ReplicatedStorage
-	elseif not ev and folder then
-		ev = folder:WaitForChild(eventName, 6) :: RemoteEvent?
-	end
-	if not ev then
-		ev = ReplicatedStorage:WaitForChild(eventName, 6) :: RemoteEvent?
 	end
 
 	return ev :: RemoteEvent

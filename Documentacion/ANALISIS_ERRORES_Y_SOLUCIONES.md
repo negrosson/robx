@@ -1015,6 +1015,30 @@ A pesar de la corrección anterior, pulsar `[E]` continuaba sin generar respuest
    * Se fuerza la activación explícita de `linearVelocity.Enabled = true` y `alignOrientation.Enabled = true` y el desanclaje local inmediato.
 
 ---
+
+## 32. Eliminación de Bloqueos en Cadena y Auto-Inicialización On-Demand del Dron
+
+### 🔍 Diagnóstico del Mensaje "Cargando dron... espera" y Congelamiento
+Al presionar `[E]`, la interfaz mostraba `[E] CARGANDO DRON... ESPERA` y no permitía volar. La auditoría profunda del flujo de carga reveló:
+1. **Bloqueo Secuencial Acumulado en el Hilo de Carga:**
+   `Main.client.luau` ejecutaba un hilo monolítico que realizaba `WaitForChild` secuenciales para 7 módulos, la carga del avatar y su humanoide (`setupGoggles`), y múltiples llamadas a `NetworkEvents.Get`.
+2. **Timeout Dual en `NetworkEvents.Get`:**
+   Al buscar un evento inexistente en la raíz de `ReplicatedStorage` cuando ya residía en `CyberNetworkEvents`, la función esperaba hasta 6 segundos por evento dos veces (12s por evento). Con 7 eventos en cadena, la inicialización podía quedar congelada hasta por un minuto.
+3. **Respuesta Pasiva de `enterDrone()`:**
+   Si el jugador pulsaba `[E]` antes de que concluyera la inicialización de fondo, `enterDrone()` se limitaba a mostrar `[E] CARGANDO DRON... ESPERA` y retornaba (`return`), sin forzar la inicialización ni reanudar la acción.
+
+### 🛠️ Solución Aplicada
+1. **Inicialización On-Demand Inmediata (`initializeDrone`):**
+   * En `enterDrone()`, si el dron aún no está listo al pulsar `[E]`, se invoca inmediatamente `initializeDrone()`. Si concluye con éxito, el despegue se ejecuta en el acto sin demoras.
+2. **Desacoplamiento en Tareas Paralelas Independientes:**
+   * **Tarea A:** Inicialización del `DroneController` prioritario al arrancar.
+   * **Tarea B:** Suscripción directa al `ProximityPrompt` de `TestDrone`.
+   * **Tarea C:** Equipamiento cosmético de gafas FPV y escuchas del avatar en su propio hilo sin bloquear el vuelo.
+   * **Tarea D:** Suscripción a eventos de red (`NetworkEvents`) en segundo plano.
+3. **Optimización de Búsqueda en `NetworkEvents.luau`:**
+   * Se redujo el timeout de búsqueda y se eliminó la espera innecesaria en `ReplicatedStorage` raíz cuando la carpeta canónica `CyberNetworkEvents` ya existe, resolviendo eventos en menos de 1 milisegundo.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 

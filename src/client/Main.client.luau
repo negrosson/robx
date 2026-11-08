@@ -88,17 +88,94 @@ local function isCurrentlyPiloting(): boolean
 end
 
 ----------------------------------------------------------------------
--- 3. FUNCIONES DE VUELO
+-- 3. INICIALIZACIÓN Y FUNCIONES DE VUELO
 ----------------------------------------------------------------------
+local exitDrone: () -> ()
+local initializeDrone: () -> boolean
+
+local function setupDroneCallbacks()
+	if not myDrone then return end
+
+	-- Sincronización bidireccional de estado de vuelo
+	if (myDrone :: any).SetOnStateChangedCallback then
+		(myDrone :: any):SetOnStateChangedCallback(function(flying: boolean)
+			isPiloting = flying
+			if flying then
+				setBtn("[F] DESCONECTAR VISOR FPV", 255, 220, 0)
+			else
+				setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+			end
+		end)
+	end
+
+	-- Callback de auto-recuperación cuando el dron es destruido en combate
+	if (myDrone :: any).SetOnDestroyedCallback then
+		(myDrone :: any):SetOnDestroyedCallback(function()
+			dbg("Dron destruido en combate - sincronizando interfaz a modo caminante...")
+			if isCurrentlyPiloting() then
+				exitDrone()
+			end
+		end)
+	end
+end
+
+function initializeDrone(): boolean
+	if droneReady and myDrone ~= nil then return true end
+
+	dbg("Buscando TestDrone en Workspace...")
+	local droneEntity = Workspace:FindFirstChild("TestDrone") or Workspace:WaitForChild("TestDrone", 8) :: Instance?
+	if not droneEntity then
+		warn("[CLIENTE] TestDrone no encontrado en Workspace tras 8s")
+		dbg("ERROR: TestDrone no encontrado en Workspace")
+		setBtn("ERROR: TestDrone no encontrado", 255, 80, 80)
+		return false
+	end
+
+	dbg("Cargando módulo DroneController...")
+	local okCtrl, ctrlMod = pcall(function()
+		local mod = ReplicatedStorage:FindFirstChild("DroneController") or ReplicatedStorage:WaitForChild("DroneController", 6)
+		return require(mod :: ModuleScript)
+	end)
+	if not okCtrl or not ctrlMod then
+		warn("[CLIENTE] DroneController falló al requerir:", ctrlMod)
+		dbg("ERROR: Falló require(DroneController)")
+		setBtn("ERROR require(DroneController)", 255, 80, 80)
+		return false
+	end
+	DroneController = ctrlMod
+
+	dbg("Creando instancia DroneController.new()...")
+	local okNew, newResult = pcall(function()
+		return DroneController.new(droneEntity)
+	end)
+	if not okNew or not newResult then
+		warn("[CLIENTE] DroneController.new() falló:", newResult)
+		dbg("ERROR new(): " .. tostring(newResult):sub(1, 40))
+		setBtn("ERROR new(): " .. tostring(newResult):sub(1, 25), 255, 80, 80)
+		return false
+	end
+
+	myDrone = newResult
+	droneReady = true
+	dbg("¡DRON LISTO! Presiona E para pilotar.")
+	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+	print("[CLIENTE] ¡DroneController completamente listo!")
+
+	setupDroneCallbacks()
+	return true
+end
+
 local function enterDrone()
 	if isCurrentlyPiloting() then return end
 	if os.clock() - lastPilotToggleTime < PILOT_TOGGLE_COOLDOWN then return end
 	lastPilotToggleTime = os.clock()
 
 	if not droneReady or myDrone == nil then
-		dbg("Dron NO listo aún, espera...")
-		setBtn("[E] CARGANDO DRON... ESPERA", 255, 200, 0)
-		return
+		dbg("Dron cargando... forzando inicialización ahora...")
+		setBtn("[E] INICIALIZANDO DRON...", 255, 200, 0)
+		if not initializeDrone() then
+			return
+		end
 	end
 
 	dbg("Iniciando vuelo FPV...")
@@ -133,7 +210,7 @@ local function enterDrone()
 	end
 end
 
-local function exitDrone()
+function exitDrone()
 	if not isCurrentlyPiloting() then return end
 	if os.clock() - lastPilotToggleTime < PILOT_TOGGLE_COOLDOWN then return end
 	lastPilotToggleTime = os.clock()
@@ -206,53 +283,41 @@ UserInputService.InputBegan:Connect(function(input: InputObject, _gpe: boolean)
 end)
 
 ----------------------------------------------------------------------
--- 4. CARGA ASÍNCRONA (task.spawn = no bloquea UI)
+-- 4. TAREAS ASÍNCRONAS EN PARALELO (NO BLOQUEANTES)
 ----------------------------------------------------------------------
+
+-- Tarea A: Inicialización del Dron al arrancar
 task.spawn(function()
-	dbg("Esperando que el servidor inicialice ReplicatedStorage...")
+	initializeDrone()
+end)
 
-	-- Esperar NetworkEvents primero (indica que el servidor corrió)
-	local neModule = ReplicatedStorage:WaitForChild("NetworkEvents", 30)
-	if not neModule then
-		warn("[CLIENTE] TIMEOUT esperando NetworkEvents - servidor no inició")
-		setBtn("ERROR: Servidor no respondió", 255, 80, 80)
-		return
-	end
-	dbg("NetworkEvents OK")
-
-	-- Lista de módulos que DEBEN existir en ReplicatedStorage
-	local rsModules = {
-		"DroneController",
-		"DroneHUD",
-		"DroneAudio",
-		"DroneVFX",
-		"DroneCargo",
-		"DeliveryManager",
-		"CyberGoggles",
-	}
-
-	for _, modName in rsModules do
-		local child = ReplicatedStorage:WaitForChild(modName, 15)
-		if not child then
-			warn("[CLIENTE] TIMEOUT esperando módulo:", modName)
-			setBtn("ERROR: falta " .. modName, 255, 80, 80)
-			return
+-- Tarea B: Conexión defensiva directa al ProximityPrompt de TestDrone
+task.spawn(function()
+	local droneEntity = Workspace:FindFirstChild("TestDrone") or Workspace:WaitForChild("TestDrone", 8)
+	if droneEntity then
+		local prompt = droneEntity:FindFirstChild("PilotPrompt") or droneEntity:WaitForChild("PilotPrompt", 5) :: ProximityPrompt?
+		if prompt then
+			prompt.Triggered:Connect(function(triggeredPlayer)
+				if triggeredPlayer == nil or triggeredPlayer == localPlayer then
+					if not isCurrentlyPiloting() then
+						enterDrone()
+					end
+				end
+			end)
 		end
-		dbg("OK: " .. modName)
 	end
+end)
 
-	-- Cargar CyberGoggles
+-- Tarea C: Gafas Cibernéticas FPV y avatar
+task.spawn(function()
 	local okGoggles, gogglesResult = pcall(function()
-		return require(ReplicatedStorage:WaitForChild("CyberGoggles", 5) :: ModuleScript)
+		local mod = ReplicatedStorage:FindFirstChild("CyberGoggles") or ReplicatedStorage:WaitForChild("CyberGoggles", 5)
+		return require(mod :: ModuleScript)
 	end)
-	if okGoggles then
+	if okGoggles and gogglesResult then
 		CyberGoggles = gogglesResult
-		dbg("CyberGoggles cargado OK")
-	else
-		warn("[CLIENTE] CyberGoggles falló:", gogglesResult)
 	end
 
-	-- Equipar gafas en avatar actual y futuros spawns, y conectar reseteo de muerte
 	local function onCharacterReset()
 		isPiloting = false
 		if myDrone and (myDrone :: any).isFlying then
@@ -265,7 +330,7 @@ task.spawn(function()
 		if CyberGoggles then
 			pcall(function() CyberGoggles.Attach(char) end)
 		end
-		local hum = char:WaitForChild("Humanoid", 5) :: Humanoid?
+		local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 4) :: Humanoid?
 		if hum then
 			hum.Died:Connect(onCharacterReset)
 		end
@@ -276,100 +341,26 @@ task.spawn(function()
 		onCharacterReset()
 		setupGoggles(char)
 	end)
+end)
 
-	-- Cargar DroneController
-	local okCtrl, ctrlResult = pcall(function()
-		return require(ReplicatedStorage:WaitForChild("DroneController", 5) :: ModuleScript)
+-- Tarea D: Suscripción a eventos de red (RemoteEvents)
+task.spawn(function()
+	local neMod = ReplicatedStorage:FindFirstChild("NetworkEvents") or ReplicatedStorage:WaitForChild("NetworkEvents", 8)
+	if not neMod then return end
+
+	local okNet, NetworkEvents = pcall(function()
+		return require(neMod :: ModuleScript)
 	end)
-	if not okCtrl then
-		warn("[CLIENTE] DroneController no cargó:", ctrlResult)
-		setBtn("ERROR DroneController", 255, 80, 80)
-		return
-	end
-	DroneController = ctrlResult
-	dbg("DroneController módulo OK")
+	if not okNet or not NetworkEvents then return end
 
-	-- Esperar el dron en Workspace — con reintentos cada segundo hasta 30s
-	dbg("Esperando TestDrone en Workspace...")
-	local droneEntity: Instance? = nil
-	local waitStart = os.clock()
-	while os.clock() - waitStart < 30 do
-		droneEntity = Workspace:FindFirstChild("TestDrone")
-		if droneEntity then break end
-		task.wait(0.5)
-	end
+	local flightEvent    = NetworkEvents.Get(NetworkEvents.Names.DroneFlightState)
+	local destroyedEv    = NetworkEvents.Get(NetworkEvents.Names.DroneDestroyed)
+	local onDmg          = NetworkEvents.Get(NetworkEvents.Names.OnDamageTaken)
+	local onEMP          = NetworkEvents.Get(NetworkEvents.Names.OnEMPActivated)
+	local onHeat         = NetworkEvents.Get(NetworkEvents.Names.OnHeatUpdate)
+	local onBounty       = NetworkEvents.Get(NetworkEvents.Names.OnBountyAwarded)
+	local buyConfirmed   = NetworkEvents.Get(NetworkEvents.Names.BuyMissilesConfirmed)
 
-	if not droneEntity then
-		warn("[CLIENTE] TestDrone no encontrado en Workspace tras 30s!")
-		setBtn("ERROR: TestDrone no encontrado", 255, 80, 80)
-		return
-	end
-	dbg("TestDrone encontrado: " .. droneEntity:GetFullName())
-
-	-- Conexión directa defensiva al ProximityPrompt del dron
-	task.spawn(function()
-		local prompt = (droneEntity :: Instance):WaitForChild("PilotPrompt", 5) :: ProximityPrompt?
-		if prompt then
-			prompt.Triggered:Connect(function(triggeredPlayer)
-				if triggeredPlayer == nil or triggeredPlayer == localPlayer then
-					if not isCurrentlyPiloting() then
-						enterDrone()
-					end
-				end
-			end)
-		end
-	end)
-
-	-- Resolver eventos de red canónicos mediante NetworkEvents
-	local NetworkEvents = require(neModule :: ModuleScript)
-	local flightEvent   = NetworkEvents.Get(NetworkEvents.Names.DroneFlightState)
-	local destroyedEv   = NetworkEvents.Get(NetworkEvents.Names.DroneDestroyed)
-	local onDmg         = NetworkEvents.Get(NetworkEvents.Names.OnDamageTaken)
-	local onEMP         = NetworkEvents.Get(NetworkEvents.Names.OnEMPActivated)
-	local onHeat        = NetworkEvents.Get(NetworkEvents.Names.OnHeatUpdate)
-	local onBounty      = NetworkEvents.Get(NetworkEvents.Names.OnBountyAwarded)
-	local buyConfirmed  = NetworkEvents.Get(NetworkEvents.Names.BuyMissilesConfirmed)
-
-	-- Crear instancia del controlador (con timeout de protección)
-	dbg("Creando DroneController.new()...")
-	local okNew, newResult = pcall(function()
-		return DroneController.new(droneEntity)
-	end)
-	if not okNew then
-		warn("[CLIENTE] DroneController.new() falló:", newResult)
-		setBtn("ERROR new(): " .. tostring(newResult):sub(1, 40), 255, 80, 80)
-		return
-	end
-
-	myDrone    = newResult
-	droneReady = true
-	dbg("¡DRON LISTO! Presiona E para pilotar.")
-	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
-	print("[CLIENTE v5] ¡Sistema de vuelo completamente inicializado!")
-
-	-- Sincronización bidireccional de estado de vuelo
-	if myDrone and (myDrone :: any).SetOnStateChangedCallback then
-		(myDrone :: any):SetOnStateChangedCallback(function(flying: boolean)
-			isPiloting = flying
-			if flying then
-				setBtn("[F] DESCONECTAR VISOR FPV", 255, 220, 0)
-			else
-				setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
-			end
-		end)
-	end
-
-	-- Callback de auto-recuperación cuando el dron es destruido en combate
-	if myDrone and (myDrone :: any).SetOnDestroyedCallback then
-		(myDrone :: any):SetOnDestroyedCallback(function()
-			dbg("Dron destruido en combate - sincronizando interfaz a modo caminante...")
-			if isCurrentlyPiloting() then
-				exitDrone()
-			end
-		end)
-	end
-
-	-- Listener de desconexión y destrucción emitida por el servidor
 	local function handleServerStopFlight()
 		dbg("Servidor ordenó StopFlying / DroneDestroyed - reseteando a Base Central")
 		if isCurrentlyPiloting() then
@@ -394,9 +385,7 @@ task.spawn(function()
 	end
 
 	if destroyedEv then
-		destroyedEv.OnClientEvent:Connect(function()
-			handleServerStopFlight()
-		end)
+		destroyedEv.OnClientEvent:Connect(handleServerStopFlight)
 	end
 
 	if onDmg then
