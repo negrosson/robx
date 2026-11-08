@@ -286,6 +286,44 @@ task.spawn(function()
 	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
 	print("[CLIENTE v5] ¡Sistema de vuelo completamente inicializado!")
 
+	-- Callback de auto-recuperación cuando el dron es destruido en combate
+	if myDrone and (myDrone :: any).SetOnDestroyedCallback then
+		(myDrone :: any):SetOnDestroyedCallback(function()
+			dbg("Dron destruido en combate - sincronizando interfaz a modo caminante...")
+			if isPiloting then
+				exitDrone()
+			end
+		end)
+	end
+
+	-- Listener de desconexión y destrucción emitida por el servidor
+	local function handleServerStopFlight()
+		dbg("Servidor ordenó StopFlying / DroneDestroyed - reseteando a Base Central")
+		if isPiloting then
+			exitDrone()
+		end
+		if myDrone and (myDrone :: any).ResetOnDestroyed then
+			pcall(function() (myDrone :: any):ResetOnDestroyed() end)
+		end
+	end
+
+	if flightEvent then
+		flightEvent.OnClientEvent:Connect(function(action: any)
+			if action == "StopFlying" or action == "DroneDestroyed" then
+				handleServerStopFlight()
+			end
+		end)
+	end
+
+	task.spawn(function()
+		local destroyedEv = ReplicatedStorage:WaitForChild("DroneDestroyed", 10) :: RemoteEvent?
+		if destroyedEv and destroyedEv:IsA("RemoteEvent") then
+			destroyedEv.OnClientEvent:Connect(function()
+				handleServerStopFlight()
+			end)
+		end
+	end)
+
 	-- Conectar eventos de combate del servidor
 	task.spawn(function()
 		local onDmg = ReplicatedStorage:WaitForChild("OnDamageTaken", 10)
@@ -329,6 +367,17 @@ task.spawn(function()
 				end
 			end)
 			dbg("OnBountyAwarded conectado")
+		end
+	end)
+
+	task.spawn(function()
+		local buyConfirmed = ReplicatedStorage:WaitForChild("BuyMissilesConfirmed", 10) :: RemoteEvent?
+		if buyConfirmed and buyConfirmed:IsA("RemoteEvent") then
+			buyConfirmed.OnClientEvent:Connect(function(count: number)
+				if myDrone and (myDrone :: any).ReloadMissiles then
+					(myDrone :: any):ReloadMissiles(count or 3, "compra")
+				end
+			end)
 		end
 	end)
 end)

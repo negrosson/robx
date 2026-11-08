@@ -271,6 +271,15 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		isWeaponOverheated = false,
 		lastCargoDropTime  = 0,         -- Fase 5: cooldown entre expulsiones de carga por daño crítico
 
+		-- ═══ Sistema de Misiles Guiados y Fijación de Objetivos ═══
+		missilesRemaining   = 3,
+		maxMissiles         = 3,
+		lastMissileFire     = 0,
+		missileCooldown     = 1.0,
+		missileKey          = Enum.KeyCode.R,
+		lockedTarget        = nil :: BasePart?,
+		onDestroyedCallback = nil :: (() -> ())?,
+
 		-- estado
 		isFPV      = false,
 		isFlying   = false,
@@ -313,6 +322,15 @@ function DroneController:SetupDeliveryCallback()
 			if self.cargo and (self.cargo :: any).RestockAtBase then
 				_, remaining = (self.cargo :: any):RestockAtBase()
 			end
+
+			-- Vía A: Si se completaron 3 entregas con éxito, recarga gratuita de 3 misiles
+			if self.deliveryManager and (self.deliveryManager :: any).CheckAndConsumeMissileRestock then
+				local earnedMissiles = (self.deliveryManager :: any):CheckAndConsumeMissileRestock()
+				if earnedMissiles then
+					self:ReloadMissiles(3, "3 entregas completadas")
+				end
+			end
+
 			if self.hud then
 				pcall(function()
 					self.hud:ShowSuccessPopup(reward, "BASE CENTRAL", remaining, true, streak, multiplier)
@@ -602,6 +620,42 @@ function DroneController:StartFlying()
 			end
 		end
 
+		-- Target Lock Detection (Detección cónica para mira central en 3ra Persona y FPV)
+		local lockedEnemy: BasePart? = nil
+		local lockedEnemyDist = 320
+		local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+
+		if cam and enemyFolder then
+			local aimRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+			local aimOrigin = aimRay.Origin
+			local aimDir = aimRay.Direction
+
+			for _, enemy in ipairs(enemyFolder:GetChildren()) do
+				if enemy:IsA("BasePart") and enemy.Name ~= "AccentBand" and enemy.Name ~= "LaserSight" then
+					local toEnemy = enemy.Position - aimOrigin
+					local dist = toEnemy.Magnitude
+					if dist <= lockedEnemyDist then
+						local dot = aimDir:Dot(toEnemy.Unit)
+						-- Cono de ~16 grados de tolerancia respecto al centro de la retícula
+						if dot >= 0.96 then
+							lockedEnemyDist = dist
+							lockedEnemy = enemy
+						end
+					end
+				end
+			end
+		end
+
+		self.lockedTarget = lockedEnemy
+		if self.hud and (self.hud :: any).SetTargetLock then
+			if lockedEnemy then
+				local cleanName = lockedEnemy.Name:gsub("_%d+", "")
+				(self.hud :: any):SetTargetLock(cleanName, lockedEnemyDist)
+			else
+				(self.hud :: any):SetTargetLock(nil)
+			end
+		end
+
 		-- Altímetro por raycast
 		local rayResult = Workspace:Raycast(self.rootPart.Position, Vector3.new(0, -600, 0), raycastParams)
 		local altitude  = if rayResult then (self.rootPart.Position.Y - rayResult.Position.Y) else 600
@@ -884,6 +938,23 @@ function DroneController:BindInputs()
 					pcall(function() (self.hud :: any):ShowHint("SISTEMA DE ENTREGA NO DISPONIBLE", true) end)
 				end
 			end
+		elseif k == (self.missileKey or Enum.KeyCode.R) then
+			-- Disparo de Misil Guiado [R]
+			self:FireMissile()
+		elseif k == Enum.KeyCode.M then
+			-- Compra táctica de recarga de misiles en Base Central por 150 PELAOCOINS
+			local buyMissilesEv = ReplicatedStorage:FindFirstChild("BuyMissiles") :: RemoteEvent?
+			if not buyMissilesEv then
+				local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents") :: Folder?
+				if evFolder then
+					buyMissilesEv = evFolder:FindFirstChild("BuyMissiles") :: RemoteEvent?
+				end
+			end
+			if buyMissilesEv then
+				buyMissilesEv:FireServer()
+			else
+				warn("[DroneController] BuyMissiles RemoteEvent no encontrado")
+			end
 		end
 	end)
 
@@ -999,8 +1070,11 @@ function DroneController:ApplyDamage(finalDamage: any, attackerPos: Vector3?)
 	end
 
 	if self.currentHealth <= 0 then
-		warn("[DroneController] ¡Dron destruido! Desconectando enlace FPV...")
-		self:StopFlying()
+		warn("[DroneController] ¡Dron destruido! Desconectando enlace y reseteando estado a Base Central...")
+		self:ResetOnDestroyed()
+		if self.onDestroyedCallback then
+			pcall(self.onDestroyedCallback)
+		end
 	end
 end
 
@@ -1021,61 +1095,32 @@ function DroneController:FireWeapon()
 	end
 	self.lastWeaponFire = now
 
-	-- Calcular origen y dirección
+	-- Calcular origen y convergencia (prioriza el objetivo fijado por la retícula)
 	local cam = Workspace.CurrentCamera
 	local originPos = self.rootPart.Position + self.rootPart.CFrame.LookVector * (self.rootPart.Size.Z * 0.5 + 0.5)
 	local targetPos: Vector3
 	local targetPart: BasePart? = nil
 
-	if self.isFPV and cam then
+	if self.lockedTarget and self.lockedTarget.Parent then
+		targetPart = self.lockedTarget
+		targetPos = self.lockedTarget.Position
+	elseif cam then
 		local unitRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
 		local rayParams = RaycastParams.new()
 		rayParams.FilterType = Enum.RaycastFilterType.Exclude
 		rayParams.FilterDescendantsInstances = { self.rootPart, Players.LocalPlayer and Players.LocalPlayer.Character }
 
-		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 200, rayParams)
+		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 240, rayParams)
 		if hit then
 			targetPos = hit.Position
 			if hit.Instance and hit.Instance:IsA("BasePart") then
 				targetPart = hit.Instance
 			end
 		else
-			targetPos = unitRay.Origin + unitRay.Direction * 180
+			targetPos = unitRay.Origin + unitRay.Direction * 200
 		end
 	else
-		-- 3ra persona: disparar hacia adelante con asistencia a enemigos cercanos
-		local forwardDir = self.rootPart.CFrame.LookVector
-		local rayParams = RaycastParams.new()
-		rayParams.FilterType = Enum.RaycastFilterType.Exclude
-		rayParams.FilterDescendantsInstances = { self.rootPart, Players.LocalPlayer and Players.LocalPlayer.Character }
-
-		local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
-		local bestDist = 180
-		if enemyFolder then
-			for _, enemy in ipairs(enemyFolder:GetChildren()) do
-				if enemy:IsA("BasePart") then
-					local toEnemy = enemy.Position - originPos
-					local dist = toEnemy.Magnitude
-					if dist < bestDist and forwardDir:Dot(toEnemy.Unit) > 0.85 then
-						bestDist = dist
-						targetPos = enemy.Position
-						targetPart = enemy
-					end
-				end
-			end
-		end
-
-		if not targetPos then
-			local hit = Workspace:Raycast(originPos, forwardDir * 180, rayParams)
-			if hit then
-				targetPos = hit.Position
-				if hit.Instance and hit.Instance:IsA("BasePart") then
-					targetPart = hit.Instance
-				end
-			else
-				targetPos = originPos + forwardDir * 180
-			end
-		end
+		targetPos = originPos + self.rootPart.CFrame.LookVector * 180
 	end
 
 	-- Simulación de proyectil local inmediata para feedback visual sin lag de red
@@ -1266,6 +1311,227 @@ function DroneController:ApplySpec(spec: { [string]: any })
 	self.config.tiltAngle     = (spec.tiltAngle :: number?) or self.config.tiltAngle
 	print(string.format("[DroneController] Spec aplicada: %s | HP:%d | Calor:%d | Vel:%.0f",
 		tostring(spec.name), self.maxHealth, self.maxHeat, self.config.cruiseSpeed))
+end
+
+----------------------------------------------------------------------
+-- GESTIÓN DE MISILES GUIADOS [R]
+----------------------------------------------------------------------
+function DroneController:FireMissile()
+	if not self.isFlying then return end
+	if self.isEMPed then return end
+
+	local now = os.clock()
+	if now - (self.lastMissileFire or 0) < (self.missileCooldown or 1.0) then return end
+
+	if (self.missilesRemaining or 0) <= 0 then
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function()
+				(self.hud :: any):ShowHint("¡SIN MISILES! Haz 3 entregas o recarga en Base con [M] (150 ₵)", true)
+			end)
+		end
+		return
+	end
+
+	if not self.lockedTarget or not self.lockedTarget.Parent then
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function()
+				(self.hud :: any):ShowHint("¡SIN OBJETIVO FIJADO! Centra la mira sobre un dron hostil.", true)
+			end)
+		end
+		return
+	end
+
+	self.lastMissileFire = now
+	self.missilesRemaining = math.max(0, (self.missilesRemaining or 3) - 1)
+
+	if self.hud and (self.hud :: any).SetMissilesDisplay then
+		pcall(function()
+			(self.hud :: any):SetMissilesDisplay(self.missilesRemaining, self.maxMissiles or 3)
+		end)
+	end
+
+	local originPos = self.rootPart.Position + Vector3.new(0, 1.2, 0)
+	local targetPart = self.lockedTarget
+	local targetPos = targetPart.Position
+
+	-- Simulación de proyectil local inmediata con feedback visual y curva Bézier
+	self:SpawnLocalMissile(originPos, targetPart)
+
+	-- Sonido de lanzamiento de cohete pesado
+	local launchSound = Instance.new("Sound")
+	launchSound.SoundId = "rbxassetid://9114223400"
+	launchSound.Volume = 2.0
+	launchSound.PlaybackSpeed = 1.35
+	launchSound.Parent = self.rootPart
+	launchSound:Play()
+	Debris:AddItem(launchSound, 2)
+
+	-- Notificar servidor para autorizar trayectoria y daño
+	local onFireEv = ReplicatedStorage:FindFirstChild("OnFireWeapon") :: RemoteEvent?
+	if onFireEv then
+		onFireEv:FireServer({
+			weaponId   = "smart_gyro_lock",
+			origin     = originPos,
+			target     = targetPos,
+			targetPart = targetPart,
+		})
+	end
+end
+
+function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePart)
+	local missile = Instance.new("Part")
+	missile.Name = "LocalSmartMissile"
+	missile.Size = Vector3.new(0.4, 0.4, 2.0)
+	missile.Material = Enum.Material.Neon
+	missile.Color = Color3.fromRGB(255, 120, 0)
+	missile.CanCollide = false
+	missile.CastShadow = false
+	missile.Massless = true
+	missile.CFrame = CFrame.lookAt(startPos, startPos + Vector3.new(0, 5, 0))
+	missile.Parent = Workspace
+	Debris:AddItem(missile, 3.5)
+
+	-- Estela de humo / propulsión
+	local pe = Instance.new("ParticleEmitter")
+	pe.Color = ColorSequence.new(Color3.fromRGB(255, 140, 20))
+	pe.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.6),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	pe.Lifetime = NumberRange.new(0.25, 0.45)
+	pe.Rate = 90
+	pe.Speed = NumberRange.new(8, 15)
+	pe.LightEmission = 1
+	pe.Parent = missile
+
+	local duration = math.clamp((targetPart.Position - startPos).Magnitude / 90, 0.4, 2.8)
+	local elapsed = 0
+	local initialPos = startPos
+	local ctrlOffset = Vector3.new(0, 18, 0) + self.rootPart.CFrame.RightVector * math.random(-8, 8)
+
+	local conn: RBXScriptConnection
+	conn = RunService.RenderStepped:Connect(function(dt: number)
+		elapsed += dt
+		local t = math.clamp(elapsed / duration, 0, 1)
+		local currentTargetPos = if targetPart and targetPart.Parent then targetPart.Position else initialPos + Vector3.new(0, 20, 100)
+		local ctrl = (initialPos + currentTargetPos) / 2 + ctrlOffset
+
+		-- Curva Bézier cuadrática de seguimiento guiado
+		local pos = (1 - t)^2 * initialPos + 2 * (1 - t) * t * ctrl + t^2 * currentTargetPos
+		local nextT = math.clamp(t + 0.05, 0, 1)
+		local nextPos = (1 - nextT)^2 * initialPos + 2 * (1 - nextT) * nextT * ctrl + nextT^2 * currentTargetPos
+
+		if (nextPos - pos).Magnitude > 0.01 then
+			missile.CFrame = CFrame.lookAt(pos, nextPos)
+		else
+			missile.Position = pos
+		end
+
+		if t >= 1 then
+			conn:Disconnect()
+			if missile.Parent then
+				-- Destello y explosión local
+				local boom = Instance.new("Part")
+				boom.Shape = Enum.PartType.Ball
+				boom.Size = Vector3.new(8, 8, 8)
+				boom.Position = currentTargetPos
+				boom.Material = Enum.Material.Neon
+				boom.Color = Color3.fromRGB(255, 100, 20)
+				boom.CanCollide = false
+				boom.Anchored = true
+				boom.Parent = Workspace
+				Debris:AddItem(boom, 0.15)
+				missile:Destroy()
+			end
+		end
+	end)
+end
+
+function DroneController:ReloadMissiles(count: number, reason: string)
+	self.missilesRemaining = math.clamp(count or 3, 0, self.maxMissiles or 3)
+	if self.hud and (self.hud :: any).SetMissilesDisplay then
+		pcall(function()
+			(self.hud :: any):SetMissilesDisplay(self.missilesRemaining, self.maxMissiles or 3)
+		end)
+	end
+	if self.hud and (self.hud :: any).ShowHint then
+		pcall(function()
+			(self.hud :: any):ShowHint(string.format("¡3 MISILES GUIADOS REABASTECIDOS! (%s)", reason), false)
+		end)
+	end
+	-- Sonido de reabastecimiento en hangar
+	local reloadSfx = Instance.new("Sound")
+	reloadSfx.SoundId = "rbxassetid://9114223170"
+	reloadSfx.Volume = 1.3
+	reloadSfx.PlaybackSpeed = 1.1
+	reloadSfx.Parent = self.rootPart
+	reloadSfx:Play()
+	Debris:AddItem(reloadSfx, 2)
+	print(string.format("[DroneController] Misiles reabastecidos al 100%% (%s).", reason))
+end
+
+----------------------------------------------------------------------
+-- GESTIÓN DE DESTRUCCIÓN Y RESPAWN LIMPIO EN BASE CENTRAL
+----------------------------------------------------------------------
+function DroneController:SetOnDestroyedCallback(callback: () -> ())
+	self.onDestroyedCallback = callback
+end
+
+function DroneController:ResetOnDestroyed()
+	print("[DroneController] ResetOnDestroyed() llamado - restaurando estado a 100%")
+	self:StopFlying()
+	self.currentHealth = self.maxHealth
+	self.currentHeat   = 0
+	self.isEMPed       = false
+	self.isWeaponOverheated = false
+	self.lockedTarget  = nil
+	self.currentVelocity = Vector3.zero
+
+	if self.linearVelocity then
+		self.linearVelocity.VectorVelocity = Vector3.zero
+	end
+	if self.alignOrient then
+		self.alignOrient.CFrame = CFrame.new()
+	end
+
+	pcall(function()
+		self.rootPart.AssemblyLinearVelocity = Vector3.zero
+		self.rootPart.AssemblyAngularVelocity = Vector3.zero
+		self.rootPart.Anchored = true
+		self.rootPart.CFrame = CFrame.new(0, 6.2, 0)
+	end)
+
+	if self.cargo and (self.cargo :: any).RestockAtBase then
+		pcall(function() (self.cargo :: any):RestockAtBase() end)
+	end
+
+	if self.deliveryManager then
+		pcall(function()
+			(self.deliveryManager :: any).packagesRemaining = 3
+			(self.deliveryManager :: any).isLanded = false
+			(self.deliveryManager :: any).touchdownTimer = 0
+			if (self.deliveryManager :: any).PickNextTarget then
+				(self.deliveryManager :: any):PickNextTarget("Pad_Base")
+			end
+		end)
+	end
+
+	if self.hud then
+		pcall(function()
+			if (self.hud :: any).SetHealthDisplay then
+				(self.hud :: any):SetHealthDisplay(1.0)
+			end
+			if (self.hud :: any).SetHeatDisplay then
+				(self.hud :: any):SetHeatDisplay(0.0)
+			end
+			if (self.hud :: any).SetTargetLock then
+				(self.hud :: any):SetTargetLock(nil)
+			end
+			if (self.hud :: any).ShowHint then
+				(self.hud :: any):ShowHint("¡DRON RECONSTRUIDO EN BASE CENTRAL!", false)
+			end
+		end)
+	end
 end
 
 ----------------------------------------------------------------------

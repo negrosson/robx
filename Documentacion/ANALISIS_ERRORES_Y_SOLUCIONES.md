@@ -24,6 +24,9 @@
 | **Créditos no se sumaban en leaderstats** | Discrepancia en nombre de divisa (`PELAOCOINS` vs `PIGICOINS` vs `CyberCréditos`). | [Main.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/Main.server.luau) | Búsqueda desacoplada por tipo (`IntValue` de leaderstats) tolerante a nombres de moneda. | [§12](#12-desacople-del-nombre-de-la-moneda) |
 | **Cámara FPV se desalinea o roll excesivo** | Cálculo de inclinación lateral acumulaba pitch y yaw sin estabilización giroscópica. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Giro con mouse en `FlightYaw`/`Pitch` y estabilización automática de balanceo en reposo. | [§13](#13-pulido-de-primera-persona-fpv) |
 | **Radar en HUD no detectaba enemigos lejanos** | Radio máximo de radar en 250 studs (Torre A está a 257 studs de Base). | [DroneHUD.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneHUD.luau) | Ampliación de alcance a 320 studs y acentos de color neón ámbar/rojo de alta salencia. | [§20](#20-auditoría-y-corrección-de-visibilidad) |
+| **Dron se bugea tras ser destruido 2 veces** | Desincronización de estado: `isPiloting` quedaba en `true` en cliente (no escuchaba `StopFlying`/`DroneDestroyed`), y HP no se reseteaba en cliente. | [CombatService.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/CombatService.server.luau)<br>[Main.client.luau](file:///x:/Datos%20Proyectos/robx/src/client/Main.client.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Callback bidireccional cliente-servidor, reseteo atómico de cámara y variables, teleport a cabina y restauración de botón [E]. | [§25](#25-resincronización-y-recuperación-robusta-tras-destrucción-de-dron) |
+| **Dificultad para apuntar en 3ra persona** | Falta de retícula/mira diegética alineada al vector de cámara y dispersión angular de proyectiles. | [DroneHUD.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneHUD.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Retícula holográfica universal centrada por `ViewportPointToRay`, escaneo cónico de 16° y fijación (*Target Lock*) de drones hostiles. | [§26](#26-mira-holográfica-universal-y-fijación-cónica-de-objetivos-en-3ra-persona-y-fpv) |
+| **Sin misiles guiados ni economía de munición** | No existía sistema de proyectiles guiados de capacidad limitada ni ciclo de recarga por entregas o compra. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau)<br>[DroneHUD.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneHUD.luau)<br>[DeliveryManager.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DeliveryManager.luau)<br>[Main.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/Main.server.luau) | Misiles guiados con tecla [R] (Bézier 3D), rack de 3 proyectiles, recarga automática tras 3 entregas o compra por 150 PELAOCOINS en Base [M]. | [§27](#27-sistema-de-misiles-guiados-térmicos-r-rack-de-3-municiones-y-recarga-dual) |
 
 ---
 
@@ -52,6 +55,9 @@
 22. [Causa Raíz Oculta: Error Fatal de Sintaxis de Luau VM (`Table.Field: Type =`)](#22-causa-raíz-oculta-error-fatal-de-sintaxis-de-luau-vm-tablefield-type-)
 23. [Pulido Dinámico de Combate y Ataques de Drones Hostiles](#23-pulido-dinámico-de-combate-y-ataques-de-drones-hostiles)
 24. [Reabastecimiento Instantáneo de Bodega en Base Central (Triple Capa)](#24-reabastecimiento-instantáneo-de-bodega-en-base-central-triple-capa)
+25. [Resincronización y Recuperación Robusta tras Destrucción de Dron](#25-resincronización-y-recuperación-robusta-tras-destrucción-de-dron)
+26. [Mira Holográfica Universal y Fijación Cónica de Objetivos en 3ra Persona y FPV](#26-mira-holográfica-universal-y-fijación-cónica-de-objetivos-en-3ra-persona-y-fpv)
+27. [Sistema de Misiles Guiados Térmicos [R], Rack de 3 Municiones y Recarga Dual (3 Entregas o 150 PELAOCOINS [M])](#27-sistema-de-misiles-guiados-térmicos-r-rack-de-3-municiones-y-recarga-dual)
 
 ---
 
@@ -774,6 +780,100 @@ Se rediseñó el flujo para proveer tres mecanismos independientes y redundantes
    * Si el jugador se sitúa en un radio holgado de hasta 42 studs de la Base Central `(0, 4, 0)` y presiona `[G]`, el sistema reabastece instantáneamente los 3 paquetes con sonido de hangar, actualiza el destino logístico y muestra en HUD: `¡Bodega reabastecida al 100%! 3 paquetes disponibles`.
 3. **Capa 3 — Salvaguarda Automática al Despegar (`DroneController.StartFlying`):**
    * Al activar el enlace de vuelo (`[E]`) o retomar el control dentro de los 45 studs de la Base Central con menos de 3 paquetes en inventario, `StartFlying()` invoca automáticamente `RestockAtBase()`, garantizando que **ningún piloto pueda despegar de su base de operaciones con la bodega vacía**.
+
+---
+
+## 25. Resincronización y Recuperación Robusta tras Destrucción de Dron
+
+### 🔍 Diagnóstico de la Desincronización y Bloqueo (Bug tras 2 muertes)
+Al ser destruido el dron por fuego enemigo (o tras 2 muertes consecutivas), el sistema experimentaba un bloqueo crítico que impedía volver a pilotar o dejaba la interfaz congelada:
+1. **Canal Desconectado en Cliente:**
+   `CombatService.server.luau` emitía el evento `DroneFlightState("StopFlying")` y `DroneDestroyed`, pero `Main.client.luau` no tenía un listener asignado para `flightEvent.OnClientEvent`. Como consecuencia, la variable booleana `isPiloting` en el cliente permanecía en `true`.
+2. **Inversión Lógica al Presionar [E]:**
+   Cuando el jugador reaparecía en la base y se acercaba a la cabina para presionar `[E]`, `Main.client.luau` evaluaba `if isPiloting then exitDrone() else enterDrone()`. Al estar `isPiloting == true`, el script ejecutaba `exitDrone()`, cancelando la interacción sin jamás entrar en el dron.
+3. **Estado de Salud y Cámara en Cero:**
+   En el controlador local (`DroneController.luau`), `self.currentHealth` se quedaba en $0$ con la viñeta roja de daño crítico al 100%, el `CombatService` no restauraba la propiedad de red (`SetNetworkOwnershipAuto`) tras anclar el dron en `(0, 6.2, 0)`, y el `CameraType` podía quedar en `Scriptable` huérfano.
+
+### 🛠️ Solución de Arquitectura y Recuperación Atómica
+Se implementó un protocolo de reseteo integral y bidireccional:
+1. **Server-Side (`CombatService.server.luau` - `destroyDrone`):**
+   * Detención física inmediata: `part.AssemblyLinearVelocity = Vector3.zero`, `part.AssemblyAngularVelocity = Vector3.zero`, `part.Anchored = true`.
+   * Reposicionamiento seguro sobre el Helipad Central: `part.CFrame = CFrame.new(0, 6.2, 0)`.
+   * Restauración completa de variables de combate: `state.health = state.maxHealth`, `state.heat = 0`, `state.isEMPed = false`.
+   * Liberación de propiedad física: `part:SetNetworkOwnershipAuto()`.
+   * Teletransporte seguro del piloto a la consola del hangar: `character:PivotTo(CFrame.new(0, 6.5, 14) * CFrame.Angles(0, math.rad(180), 0))`.
+   * Disparo garantizado de `DroneDestroyed` y `DroneFlightState("StopFlying")`.
+2. **Client-Side (`Main.client.luau` & `DroneController.luau`):**
+   * Se enlazó el listener de `flightEvent.OnClientEvent` y `destroyedEv.OnClientEvent`.
+   * Al recibir la señal de destrucción:
+     - Se invoca `exitDrone()`, sincronizando `isPiloting = false`.
+     - El botón de interacción en pantalla restaura su texto a `[E] CONECTAR GAFAS FPV` en color cian neón `#00F0FF`.
+     - Se ejecuta `myDrone:ResetOnDestroyed()`, el cual restaura la salud local al máximo (`self.currentHealth = self.maxHealth`), oculta la viñeta de daño, limpia bloqueos de misiles y restablece la cámara a `Enum.CameraType.Custom`.
+   * Se configuró el callback `myDrone:SetOnDestroyedCallback(function() if isPiloting then exitDrone() end end)` para que cualquier destrucción detectada localmente también apague de inmediato el bucle de vuelo.
+
+---
+
+## 26. Mira Holográfica Universal y Fijación Cónica de Objetivos en 3ra Persona y FPV
+
+### 🔍 Diagnóstico de Puntería en Tercera Persona
+1. **Disparidad de Perspectiva (Parallax Error):**
+   En tercera persona, la cámara orbita detrás y por encima del dron. Al disparar el cañón de plasma, los proyectiles salían en la dirección del morro de la nave (`part.CFrame.LookVector`), el cual no coincidía con el centro de visión del jugador en pantalla, haciendo casi imposible acertar a naves enemigas ágiles.
+2. **Falta de Retícula Diegética y Telemetría:**
+   No había ningún punto o cruceta central en pantalla que indicara la trayectoria real de impacto ni si un dron enemigo estaba dentro del arco efectivo de tiro.
+
+### 🛠️ Solución: Retícula Dinámica con Proyección Raycast y Fijación Cónica (Target Lock)
+1. **Retícula Holográfica en HUD (`DroneHUD.luau`):**
+   * Retícula central diegética con 4 cuadrantes (`CrosshairContainer` de $32\times32$ px) y un punto central de precisión (*Pip*) de $4\times4$ px en cian neón `#00F0FF`.
+   * **Tag de Fijación de Objetivo (`TargetLockTag`):** Etiqueta animada debajo de la cruceta que muestra el estado de rastreo en tiempo real:
+     `[ 🎯 FIJADO: <NOMBRE_ENEMIGO> | <DISTANCIA>m ]` en rojo neón `#FF3344`.
+2. **Escaneo Cónico en RenderStepped (`DroneController.luau`):**
+   * Se proyecta un rayo desde el centro de la pantalla mediante `cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)`.
+   * Se itera sobre todos los drones hostiles en `Workspace.EnemyDrones`:
+     * Se evalúa el ángulo cónico entre el vector de mira y el vector hacia la nave enemiga:
+       $$\cos(\theta) = \hat{\mathbf{d}}_{\text{mira}} \cdot \hat{\mathbf{d}}_{\text{enemigo}}$$
+     * Si $\theta \le 16^\circ$ y la distancia es $\le 320\text{ studs}$ con línea de visión sin oclusión (`Raycast`), el sistema selecciona el objetivo más cercano al centro de la mira y lo fija (`self.lockedTarget`).
+3. **Convergencia Balística Universal (`FireWeapon`):**
+   * Tanto en FPV como en 3ra persona, los pernos de plasma calculan su vector de propagación directamente hacia el punto de impacto del rayo de la cámara o hacia el centro de masa del objetivo fijado:
+     $$\mathbf{v}_{\text{plasma}} = \frac{\mathbf{P}_{\text{impacto}} - \mathbf{P}_{\text{boquilla}}}{\|\mathbf{P}_{\text{impacto}} - \mathbf{P}_{\text{boquilla}}\|} \times 240\text{ studs/s}$$
+   * Esto elimina por completo el error de paralaje, permitiendo disparar exactamente hacia donde apunta el cursor en pantalla.
+
+---
+
+## 27. Sistema de Misiles Guiados Térmicos [R], Rack de 3 Municiones y Recarga Dual
+
+### 🔍 Especificación del Sistema de Misiles Tácticos
+Para enriquecer el combate aéreo y la economía de juego, se implementó un sistema de armamento pesado con las siguientes reglas de juego:
+* **Capacidad Limitada:** Rack de **3 misiles** por dron (`missilesRemaining = 3`, `maxMissiles = 3`).
+* **Disparo Guiado Condicional:** Tecla `[R]` (configurable por el usuario). Requiere tener un dron enemigo previamente fijado en la retícula (`Target Lock`).
+* **Trayectoria Bézier 3D:** El misil sale eyectado hacia arriba/lateralmente y luego traza una curva suave persiguiendo activamente al objetivo hasta detonar, causando daño masivo en área.
+* **Economía de Recarga Dual:**
+  1. **Vía Logística (Gratuita):** Completar **3 entregas** de paquetes en torres recarga automáticamente el rack de misiles al 100% (3/3).
+  2. **Vía Financiera (En Base):** Pagar **150 PELAOCOINS** presionando `[M]` en el hangar de la Base Central para reabastecimiento instantáneo.
+
+### 🛠️ Implementación Técnica de Componentes
+
+#### 1. Trayectoria Balística y Física de Misiles (`DroneController.luau`)
+Al presionar `[R]`, si `missilesRemaining > 0` y `self.lockedTarget` es válido:
+1. Se descuenta 1 misil y se reproduce sonido de eyección balística (`rbxassetid://9114223170`).
+2. Se genera un proyectil local con tubo aerodinámico neón (`Neon Dark Stone Grey`), ojiva cónica ámbar y cola con partículas de humo denso y fuego.
+3. Mediante `RunService.Heartbeat`, se interpola una curva Bézier cúbica tridimensional en 0.75 segundos:
+   * Punto de inicio $\mathbf{P}_0$: Posición actual del dron.
+   * Punto de control $\mathbf{P}_1$: Vector de elevación y dispersión lateral:
+     $$\mathbf{P}_1 = \mathbf{P}_0 + \text{UpVector} \times 20 + \text{RightVector} \times (\pm 8)$$
+   * Punto objetivo $\mathbf{P}_2$: Posición en tiempo real del objetivo fijado.
+4. Al alcanzar al objetivo, se produce una explosión sónica con 200 partículas, destello luminoso de 6 studs y se envía el evento de daño de alto calibre (65 HP) a `CombatService.server.luau`.
+
+#### 2. Visualización en HUD (`DroneHUD.luau`)
+El panel de telemetría de combate exhibe el rack de misiles en tiempo real:
+* Formato: `MISILES [R]: [ ■ ■ ■ ] (3/3)` en cian neón.
+* Conforme se agotan: `[ ■ ■ □ ] (2/3)`, `[ ■ □ □ ] (1/3)` y en color carmesí `[ □ □ □ ] (0/3) SIN MUNICIÓN`.
+
+#### 3. Ciclo de Recarga Dual (`DeliveryManager.luau` & `Main.server.luau`)
+* **Contador de Entregas:** `DeliveryManager.luau` mantiene la propiedad interna `deliveriesCompletedSinceRestock`. Cada entrega exitosa a helipuertos de torres incrementa el contador. Al llegar a 3 entregas, `CheckAndConsumeMissileRestock()` devuelve `true`, resetea el contador a 0 y activa `myDrone:ReloadMissiles(3, "3 entregas completadas")`.
+* **Compra en Base [M]:**
+  * Presionar `[M]` a bordo del dron o en la base dispara el RemoteEvent canónico `BuyMissiles`.
+  * `Main.server.luau` valida la distancia a la Base Central ($\le 55\text{ studs}$) y descuenta **150 PELAOCOINS** de `leaderstats`.
+  * El servidor replica `BuyMissilesConfirmed`, recargando el rack a 3/3 con sonido de sirena de hangar y confirmación en HUD.
 
 ---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*

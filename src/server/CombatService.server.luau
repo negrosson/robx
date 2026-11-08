@@ -147,8 +147,8 @@ local function destroyDrone(state: DroneState, killerPlayer: Player?)
 	Debris:AddItem(explosion, 3)
 
 	if state.owner then
-		-- Dron del jugador: NO destruir TestDrone físicamente; resetear a Base Central
-		print(string.format("[CombatService] Dron del jugador %s destruido. Reseteando a Base Central.", state.owner.Name))
+		-- Dron del jugador: NO destruir TestDrone físicamente; resetear a Base Central de forma atómica
+		print(string.format("[CombatService] ¡DRON DESTRUIDO! Reseteando dron y piloto %s a Base Central.", state.owner.Name))
 		part.AssemblyLinearVelocity = Vector3.zero
 		part.AssemblyAngularVelocity = Vector3.zero
 		part.Anchored = true
@@ -157,15 +157,37 @@ local function destroyDrone(state: DroneState, killerPlayer: Player?)
 		state.heat = 0
 		state.isEMPed = false
 
-		-- Notificar al jugador
+		-- Devolver propiedad física al servidor para evitar desincronizaciones de red
+		pcall(function()
+			part:SetNetworkOwnershipAuto()
+		end)
+
+		-- Teletransportar al personaje del piloto de vuelta a la estación de control en Base Central
+		local char = state.owner.Character
+		if char then
+			local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if hrp then
+				hrp.AssemblyLinearVelocity = Vector3.zero
+				hrp.AssemblyAngularVelocity = Vector3.zero
+				hrp.CFrame = CFrame.new(0, 6.5, 14) * CFrame.Angles(0, math.rad(180), 0)
+			end
+		end
+
+		-- Notificar al jugador con evento de daño y eventos dedicados de desconexión / destrucción
 		onDamagedEvent:FireClient(state.owner, {
 			damage    = 0,
 			rawDamage = 0,
 			weapon    = "DESTRUIDO // RESPAWN EN BASE",
 			healthPct = 1.0,
+			isDestroyed = true,
 		})
 
-		local flightEv = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
+		local destroyedEv = ensureRemote("DroneDestroyed")
+		if destroyedEv then
+			destroyedEv:FireClient(state.owner)
+		end
+
+		local flightEv = ensureRemote("DroneFlightState")
 		if flightEv then
 			flightEv:FireClient(state.owner, "StopFlying")
 		end

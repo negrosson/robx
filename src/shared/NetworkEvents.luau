@@ -8,16 +8,18 @@ local NetworkEvents = {}
 
 -- Nombres tipados de eventos de red
 NetworkEvents.Names = {
-	DroneFlightState   = "DroneFlightState",
-	ClaimDelivery      = "DeliveryCompleted",  -- Petición de entrega del cliente
-	DeliveryConfirmed  = "DeliveryConfirmed",  -- Confirmación validada por servidor
-	DeliveryRejected   = "DeliveryRejected",   -- Notificación de rechazo con motivo
-	DroneDestroyed     = "DroneDestroyed",
-	OnFireWeapon       = "OnFireWeapon",
-	OnDamageTaken      = "OnDamageTaken",
-	OnEMPActivated     = "OnEMPActivated",
-	OnHeatUpdate       = "OnHeatUpdate",
-	OnBountyAwarded    = "OnBountyAwarded",
+	DroneFlightState      = "DroneFlightState",
+	ClaimDelivery         = "DeliveryCompleted",  -- Petición de entrega del cliente
+	DeliveryConfirmed     = "DeliveryConfirmed",  -- Confirmación validada por servidor
+	DeliveryRejected      = "DeliveryRejected",   -- Notificación de rechazo con motivo
+	DroneDestroyed        = "DroneDestroyed",
+	OnFireWeapon          = "OnFireWeapon",
+	OnDamageTaken         = "OnDamageTaken",
+	OnEMPActivated        = "OnEMPActivated",
+	OnHeatUpdate          = "OnHeatUpdate",
+	OnBountyAwarded       = "OnBountyAwarded",
+	BuyMissiles           = "BuyMissiles",
+	BuyMissilesConfirmed  = "BuyMissilesConfirmed",
 }
 
 local FOLDER_NAME = "CyberNetworkEvents"

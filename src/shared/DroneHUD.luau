@@ -49,6 +49,10 @@ export type HUDInstance = {
 	-- Fase 5: Rush Orders y Rango
 	rushTimerLabel: TextLabel,
 	rankBadge: TextLabel,
+	-- Combate en Tercera Persona y Misiles Guiados
+	targetLockTag: TextLabel,
+	centerDot: Frame,
+	missileStatusLabel: TextLabel,
 }
 
 local COLOR_BG = Color3.fromRGB(8, 14, 24)
@@ -149,6 +153,21 @@ function DroneHUD.new(): HUDInstance
 	end
 	createBracket(0.1, "[")
 	createBracket(0.9, "]")
+
+	-- Rótulo de Fijado de Objetivo (Lock-On para Combate en 3ra Persona y Misiles)
+	local targetLockTag = Instance.new("TextLabel")
+	targetLockTag.Name = "TargetLockTag"
+	targetLockTag.Size = UDim2.fromOffset(260, 20)
+	targetLockTag.AnchorPoint = Vector2.new(0.5, 1)
+	targetLockTag.Position = UDim2.new(0.5, 0, 0, -8)
+	targetLockTag.BackgroundTransparency = 1
+	targetLockTag.Font = Enum.Font.Code
+	targetLockTag.Text = "[ 🎯 FIJADO: OBJETIVO | 100m ]"
+	targetLockTag.TextColor3 = Color3.fromRGB(255, 35, 60)
+	targetLockTag.TextSize = 12
+	targetLockTag.TextStrokeTransparency = 0.2
+	targetLockTag.Visible = false
+	targetLockTag.Parent = crosshairContainer
 
 	local brakeIndicator = Instance.new("TextLabel")
 	brakeIndicator.Name = "BrakeIndicator"
@@ -255,7 +274,7 @@ function DroneHUD.new(): HUDInstance
 	----------------------------------------------------------------------
 	local combatBox = Instance.new("Frame")
 	combatBox.Name = "CombatStatusBox"
-	combatBox.Size = UDim2.fromOffset(210, 88)
+	combatBox.Size = UDim2.fromOffset(210, 108)
 	combatBox.AnchorPoint = Vector2.new(0, 1)
 	combatBox.Position = UDim2.new(0, 35, 1, -148)
 	combatBox.BackgroundColor3 = COLOR_BG
@@ -351,6 +370,19 @@ function DroneHUD.new(): HUDInstance
 	empStatusLabel.TextSize = 10
 	empStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 	empStatusLabel.Parent = combatBox
+
+	-- Módulo de Munición de Misiles Guiados [R]
+	local missileStatusLabel = Instance.new("TextLabel")
+	missileStatusLabel.Name = "MissileStatusLabel"
+	missileStatusLabel.Size = UDim2.new(1, -20, 0, 14)
+	missileStatusLabel.Position = UDim2.fromOffset(10, 85)
+	missileStatusLabel.BackgroundTransparency = 1
+	missileStatusLabel.Font = Enum.Font.RobotoMono
+	missileStatusLabel.Text = "MISILES [R]: [ ■ ■ ■ ] (3/3)"
+	missileStatusLabel.TextColor3 = Color3.fromRGB(255, 180, 0)
+	missileStatusLabel.TextSize = 10
+	missileStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	missileStatusLabel.Parent = combatBox
 
 	----------------------------------------------------------------------
 	-- 2C. RADAR TÁCTICO DE AMENAZAS 360° (SUPERIOR IZQUIERDA)
@@ -888,6 +920,10 @@ function DroneHUD.new(): HUDInstance
 		-- Fase 5: Rush Orders y Rango
 		rushTimerLabel = rushTimerLabel,
 		rankBadge = rankBadge,
+		-- Combate en Tercera Persona y Misiles Guiados
+		targetLockTag = targetLockTag,
+		centerDot = centerDot,
+		missileStatusLabel = missileStatusLabel,
 	}
 
 	return setmetatable(self, DroneHUD) :: any
@@ -1246,6 +1282,40 @@ function DroneHUD.SetHeatDisplay(self: HUDInstance, pct: number)
 	local heat = math.clamp(pct, 0, 1)
 	self.heatFill.Size = UDim2.fromScale(heat, 1)
 	self.heatLabel.Text = string.format("CALOR NÚCLEO: %d%%", math.round(heat * 100))
+end
+
+function DroneHUD.SetTargetLock(self: HUDInstance, targetName: string?, distance: number?)
+	if targetName then
+		self.targetLockTag.Visible = true
+		self.targetLockTag.Text = string.format("[ 🎯 FIJADO: %s | %.0fm ]", targetName:upper(), distance or 0)
+		self.centerDot.BackgroundColor3 = Color3.fromRGB(255, 35, 60)
+		self.horizonLine.BackgroundColor3 = Color3.fromRGB(255, 35, 60)
+	else
+		self.targetLockTag.Visible = false
+		self.centerDot.BackgroundColor3 = COLOR_NEON_CYAN
+		self.horizonLine.BackgroundColor3 = COLOR_NEON_CYAN
+	end
+end
+
+function DroneHUD.SetMissilesDisplay(self: HUDInstance, remaining: number, maxMissiles: number)
+	local maxM = maxMissiles or 3
+	local rem = math.clamp(remaining, 0, maxM)
+	local pips = ""
+	for i = 1, maxM do
+		if i <= rem then
+			pips = pips .. "■ "
+		else
+			pips = pips .. "□ "
+		end
+	end
+	pips = pips:gsub("%s+$", "")
+	if rem > 0 then
+		self.missileStatusLabel.Text = string.format("MISILES [R]: [ %s ] (%d/%d)", pips, rem, maxM)
+		self.missileStatusLabel.TextColor3 = Color3.fromRGB(255, 180, 0)
+	else
+		self.missileStatusLabel.Text = "MISILES [R]: [ □ □ □ ] (0/3 - VACÍO)"
+		self.missileStatusLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+	end
 end
 
 function DroneHUD.ShowSuccessPopup(

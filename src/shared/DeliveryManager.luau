@@ -54,6 +54,8 @@ export type ManagerInstance = {
 	rushTimeRemaining: number,
 	rushTotalTime: number,
 	rushMultiplier: number,
+	-- Contador para reabastecimiento gratuito de misiles guiados (3 entregas)
+	deliveriesCompletedSinceRestock: number,
 }
 
 -- Tolerancias de aterrizaje generosas para jugabilidad fluida
@@ -227,6 +229,7 @@ function DeliveryManager.new(): ManagerInstance
 		rushTimeRemaining = 0,
 		rushTotalTime = 0,
 		rushMultiplier = 1.0,
+		deliveriesCompletedSinceRestock = 0,
 	}
 
 	-- Auto-refrescar cuando se repliquen helipuertos del servidor
@@ -249,6 +252,7 @@ function DeliveryManager.new(): ManagerInstance
 		else
 			-- Entrega normal en una torre
 			self.packagesRemaining = math.max(0, self.packagesRemaining - 1)
+			self.deliveriesCompletedSinceRestock += 1
 			if typeof(serverStreak) == "number" then
 				self.deliveryStreak = serverStreak
 			else
@@ -661,6 +665,18 @@ end
 function DeliveryManager.ResetStreak(self: ManagerInstance)
 	self.deliveryStreak = 0
 	self.streakMultiplier = 1.0
+end
+
+function DeliveryManager.GetDeliveriesCompletedSinceRestock(self: ManagerInstance): number
+	return self.deliveriesCompletedSinceRestock or 0
+end
+
+function DeliveryManager.CheckAndConsumeMissileRestock(self: ManagerInstance): boolean
+	if (self.deliveriesCompletedSinceRestock or 0) >= 3 then
+		self.deliveriesCompletedSinceRestock = 0
+		return true
+	end
+	return false
 end
 
 function DeliveryManager.SetOnDeliveryCallback(

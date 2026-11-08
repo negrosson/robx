@@ -13,6 +13,8 @@ local flightStateEvent       = NetworkEvents.Get(NetworkEvents.Names.DroneFlight
 local claimDeliveryEvent     = NetworkEvents.Get(NetworkEvents.Names.ClaimDelivery)
 local deliveryConfirmedEvent = NetworkEvents.Get(NetworkEvents.Names.DeliveryConfirmed)
 local deliveryRejectedEvent  = NetworkEvents.Get(NetworkEvents.Names.DeliveryRejected)
+local buyMissilesEvent       = NetworkEvents.Get(NetworkEvents.Names.BuyMissiles)
+local buyMissilesConfirmedEv = NetworkEvents.Get(NetworkEvents.Names.BuyMissilesConfirmed)
 
 ----------------------------------------------------------------------
 -- 1. GENERADOR DE HELIPUERTOS Y RAMPA DE ACCESO
@@ -551,4 +553,49 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any, 
 	else
 		warn(string.format("[Servidor] Error al premiar a %s: credits o deliveries no encontrados en leaderstats", player.Name))
 	end
+end)
+
+----------------------------------------------------------------------
+-- 5. REABASTECIMIENTO DE MISILES CON PELAOCOINS
+----------------------------------------------------------------------
+local MISSILE_PACK_COST = 150
+buyMissilesEvent.OnServerEvent:Connect(function(player: Player)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then return end
+
+	local coins: IntValue? = (leaderstats:FindFirstChild(CURRENCY_NAME) or leaderstats:FindFirstChild("PIGICOINS") or leaderstats:FindFirstChild("CyberCréditos")) :: IntValue?
+	if not coins then
+		for _, stat in ipairs(leaderstats:GetChildren()) do
+			if stat:IsA("IntValue") and stat.Name ~= "Entregas" then
+				coins = stat
+				break
+			end
+		end
+	end
+
+	if not coins then return end
+
+	if coins.Value < MISSILE_PACK_COST then
+		deliveryRejectedEvent:FireClient(player, string.format("Créditos insuficientes: necesitas %d PELAOCOINS (tienes %d)", MISSILE_PACK_COST, coins.Value))
+		return
+	end
+
+	-- Verificar que el jugador/dron esté dentro del perímetro de Base Central (55 studs)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local inBase = false
+	if dronePart and (dronePart.Position - Vector3.new(0, 4, 0)).Magnitude <= 55 then
+		inBase = true
+	elseif hrp and (hrp.Position - Vector3.new(0, 4, 0)).Magnitude <= 55 then
+		inBase = true
+	end
+
+	if not inBase then
+		deliveryRejectedEvent:FireClient(player, "Debes estar en Base Central para recargar misiles")
+		return
+	end
+
+	coins.Value -= MISSILE_PACK_COST
+	buyMissilesConfirmedEv:FireClient(player, 3)
+	print(string.format("[Servidor] %s adquirió 3 misiles guiados (-%d %s | Restan: %d)", player.Name, MISSILE_PACK_COST, coins.Name, coins.Value))
 end)
