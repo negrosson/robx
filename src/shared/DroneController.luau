@@ -304,6 +304,8 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		cyberGoggles    = CyberGoggles,
 		playerControls  = playerControls,
 		flightStateEvent = flightStateEvent,
+		networkEvents   = if okNet then NetworkEvents else nil,
+		onStateChangedCallback = nil :: ((boolean) -> ())?,
 	}, DroneController)
 
 	-- Callback de entrega y logística
@@ -311,6 +313,23 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 
 	print("[DroneController v5] Listo!")
 	return self
+end
+
+function DroneController:SetOnStateChangedCallback(callback: (boolean) -> ())
+	self.onStateChangedCallback = callback
+end
+
+function DroneController:GetRemoteEvent(name: string): RemoteEvent?
+	if self.networkEvents and (self.networkEvents :: any).Get then
+		local ok, ev = pcall(function() return (self.networkEvents :: any).Get(name) end)
+		if ok and ev then return ev end
+	end
+	local folder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents")
+	if folder then
+		local ev = folder:FindFirstChild(name) :: RemoteEvent?
+		if ev then return ev end
+	end
+	return ReplicatedStorage:FindFirstChild(name) :: RemoteEvent?
 end
 
 function DroneController:SetupDeliveryCallback()
@@ -634,12 +653,22 @@ function DroneController:StartFlying()
 				if enemy:IsA("BasePart") and enemy.Name ~= "AccentBand" and enemy.Name ~= "LaserSight" then
 					local toEnemy = enemy.Position - aimOrigin
 					local dist = toEnemy.Magnitude
-					if dist <= lockedEnemyDist then
+					if dist <= lockedEnemyDist and dist > 1.0 then
 						local dot = aimDir:Dot(toEnemy.Unit)
 						-- Cono de ~16 grados de tolerancia respecto al centro de la retícula
 						if dot >= 0.96 then
-							lockedEnemyDist = dist
-							lockedEnemy = enemy
+							-- Comprobar línea de visión física (no fijar enemigos detrás de torres o edificios)
+							local losParams = RaycastParams.new()
+							losParams.FilterType = Enum.RaycastFilterType.Exclude
+							local losExclude = { self.rootPart }
+							if lp and lp.Character then table.insert(losExclude, lp.Character) end
+							losParams.FilterDescendantsInstances = losExclude
+
+							local losHit = Workspace:Raycast(aimOrigin, toEnemy, losParams)
+							if not losHit or losHit.Instance == enemy or losHit.Instance:IsDescendantOf(enemy) then
+								lockedEnemyDist = dist
+								lockedEnemy = enemy
+							end
 						end
 					end
 				end
@@ -742,6 +771,9 @@ function DroneController:StartFlying()
 	end)
 
 	print("[DroneController] ¡Loop de vuelo iniciado!")
+	if self.onStateChangedCallback then
+		pcall(self.onStateChangedCallback, true)
+	end
 end
 
 ----------------------------------------------------------------------
@@ -806,6 +838,10 @@ function DroneController:StopFlying()
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then camera.CameraSubject = hum end
 		camera.FieldOfView = self.config.baseFOV
+	end
+
+	if self.onStateChangedCallback then
+		pcall(self.onStateChangedCallback, false)
 	end
 end
 
@@ -943,13 +979,7 @@ function DroneController:BindInputs()
 			self:FireMissile()
 		elseif k == Enum.KeyCode.M then
 			-- Compra táctica de recarga de misiles en Base Central por 150 PELAOCOINS
-			local buyMissilesEv = ReplicatedStorage:FindFirstChild("BuyMissiles") :: RemoteEvent?
-			if not buyMissilesEv then
-				local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents") :: Folder?
-				if evFolder then
-					buyMissilesEv = evFolder:FindFirstChild("BuyMissiles") :: RemoteEvent?
-				end
-			end
+			local buyMissilesEv = self:GetRemoteEvent("BuyMissiles")
 			if buyMissilesEv then
 				buyMissilesEv:FireServer()
 			else
@@ -1101,15 +1131,18 @@ function DroneController:FireWeapon()
 	local targetPos: Vector3
 	local targetPart: BasePart? = nil
 
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	local lp = Players.LocalPlayer
+	local excludeList: { Instance } = { self.rootPart }
+	if lp and lp.Character then table.insert(excludeList, lp.Character) end
+	rayParams.FilterDescendantsInstances = excludeList
+
 	if self.lockedTarget and self.lockedTarget.Parent then
 		targetPart = self.lockedTarget
 		targetPos = self.lockedTarget.Position
 	elseif cam then
 		local unitRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-		local rayParams = RaycastParams.new()
-		rayParams.FilterType = Enum.RaycastFilterType.Exclude
-		rayParams.FilterDescendantsInstances = { self.rootPart, Players.LocalPlayer and Players.LocalPlayer.Character }
-
 		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 240, rayParams)
 		if hit then
 			targetPos = hit.Position
@@ -1123,6 +1156,20 @@ function DroneController:FireWeapon()
 		targetPos = originPos + self.rootPart.CFrame.LookVector * 180
 	end
 
+	-- Comprobar colisión estricta de trayectoria entre la boquilla y targetPos contra torres y obstáculos
+	local toTarget = targetPos - originPos
+	if toTarget.Magnitude > 0.5 then
+		local trajHit = Workspace:Raycast(originPos, toTarget, rayParams)
+		if trajHit and trajHit.Instance then
+			local hitObj = trajHit.Instance
+			-- Si impactó una torre, pared, helipuerto o edificio antes de llegar a la nave enemiga
+			if hitObj ~= targetPart and not (targetPart and hitObj:IsDescendantOf(targetPart)) then
+				targetPos = trajHit.Position
+				targetPart = hitObj
+			end
+		end
+	end
+
 	-- Simulación de proyectil local inmediata para feedback visual sin lag de red
 	self:SpawnLocalPlasmaBolt(originPos, targetPos)
 
@@ -1133,7 +1180,7 @@ function DroneController:FireWeapon()
 	end
 
 	-- Notificar servidor para validación autoritativa de daño y efectos
-	local onFireEv = ReplicatedStorage:FindFirstChild("OnFireWeapon") :: RemoteEvent?
+	local onFireEv = self:GetRemoteEvent("OnFireWeapon")
 	if onFireEv then
 		onFireEv:FireServer({
 			weaponId   = "magma_spike",
@@ -1168,6 +1215,17 @@ function DroneController:SpawnLocalPlasmaBolt(startPos: Vector3, endPos: Vector3
 	tween:Play()
 	tween.Completed:Connect(function()
 		if bolt.Parent then
+			-- Destello de impacto y chispas al colisionar contra la torre o nave
+			local flash = Instance.new("Part")
+			flash.Shape = Enum.PartType.Ball
+			flash.Size = Vector3.new(1.8, 1.8, 1.8)
+			flash.Material = Enum.Material.Neon
+			flash.Color = Color3.fromRGB(255, 160, 40)
+			flash.Position = endPos
+			flash.CanCollide = false
+			flash.Anchored = true
+			flash.Parent = Workspace
+			Debris:AddItem(flash, 0.10)
 			bolt:Destroy()
 		end
 	end)
@@ -1197,7 +1255,7 @@ function DroneController:TriggerEMP()
 	end
 
 	-- Notificar servidor para aplicar contramedida autoritativa
-	local onEMPEv = ReplicatedStorage:FindFirstChild("OnEMPActivated") :: RemoteEvent?
+	local onEMPEv = self:GetRemoteEvent("OnEMPActivated")
 	if onEMPEv then
 		onEMPEv:FireServer()
 	end
@@ -1367,7 +1425,7 @@ function DroneController:FireMissile()
 	Debris:AddItem(launchSound, 2)
 
 	-- Notificar servidor para autorizar trayectoria y daño
-	local onFireEv = ReplicatedStorage:FindFirstChild("OnFireWeapon") :: RemoteEvent?
+	local onFireEv = self:GetRemoteEvent("OnFireWeapon")
 	if onFireEv then
 		onFireEv:FireServer({
 			weaponId   = "smart_gyro_lock",
@@ -1407,6 +1465,7 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 	local duration = math.clamp((targetPart.Position - startPos).Magnitude / 90, 0.4, 2.8)
 	local elapsed = 0
 	local initialPos = startPos
+	local prevPos = startPos
 	local ctrlOffset = Vector3.new(0, 18, 0) + self.rootPart.CFrame.RightVector * math.random(-8, 8)
 
 	local conn: RBXScriptConnection
@@ -1421,6 +1480,39 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 		local nextT = math.clamp(t + 0.05, 0, 1)
 		local nextPos = (1 - nextT)^2 * initialPos + 2 * (1 - nextT) * nextT * ctrl + nextT^2 * currentTargetPos
 
+		-- Comprobar colisión estricta en tiempo real contra torres y obstáculos del mundo
+		local seg = pos - prevPos
+		if seg.Magnitude > 0.05 then
+			local mParams = RaycastParams.new()
+			mParams.FilterType = Enum.RaycastFilterType.Exclude
+			local lp = Players.LocalPlayer
+			local mExclude = { self.rootPart, missile }
+			if lp and lp.Character then table.insert(mExclude, lp.Character) end
+			mParams.FilterDescendantsInstances = mExclude
+
+			local mHit = Workspace:Raycast(prevPos, seg, mParams)
+			if mHit and mHit.Instance then
+				local hitObj = mHit.Instance
+				-- Si golpeó una torre, pared, helipuerto o edificio, detonar inmediatamente
+				conn:Disconnect()
+				if missile.Parent then
+					local boom = Instance.new("Part")
+					boom.Shape = Enum.PartType.Ball
+					boom.Size = Vector3.new(9, 9, 9)
+					boom.Position = mHit.Position
+					boom.Material = Enum.Material.Neon
+					boom.Color = Color3.fromRGB(255, 120, 20)
+					boom.CanCollide = false
+					boom.Anchored = true
+					boom.Parent = Workspace
+					Debris:AddItem(boom, 0.2)
+					missile:Destroy()
+				end
+				return
+			end
+		end
+		prevPos = pos
+
 		if (nextPos - pos).Magnitude > 0.01 then
 			missile.CFrame = CFrame.lookAt(pos, nextPos)
 		else
@@ -1430,7 +1522,7 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 		if t >= 1 then
 			conn:Disconnect()
 			if missile.Parent then
-				-- Destello y explosión local
+				-- Destello y explosión local al alcanzar el objetivo
 				local boom = Instance.new("Part")
 				boom.Shape = Enum.PartType.Ball
 				boom.Size = Vector3.new(8, 8, 8)
@@ -1490,8 +1582,8 @@ function DroneController:ResetOnDestroyed()
 	if self.linearVelocity then
 		self.linearVelocity.VectorVelocity = Vector3.zero
 	end
-	if self.alignOrient then
-		self.alignOrient.CFrame = CFrame.new()
+	if self.alignOrientation then
+		self.alignOrientation.CFrame = self.rootPart.CFrame
 	end
 
 	pcall(function()

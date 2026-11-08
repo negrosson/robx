@@ -38,6 +38,10 @@ function NetworkEvents.Init(): Folder
 		local ev = folder:FindFirstChild(eventName) :: RemoteEvent?
 		if not ev then
 			ev = ReplicatedStorage:FindFirstChild(eventName) :: RemoteEvent?
+			if ev then
+				-- Consolidar dentro de folder para evitar split-brain
+				ev.Parent = folder
+			end
 		end
 
 		if not ev then

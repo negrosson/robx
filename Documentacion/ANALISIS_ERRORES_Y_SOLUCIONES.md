@@ -27,6 +27,8 @@
 | **Dron se bugea tras ser destruido 2 veces** | Desincronización de estado: `isPiloting` quedaba en `true` en cliente (no escuchaba `StopFlying`/`DroneDestroyed`), y HP no se reseteaba en cliente. | [CombatService.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/CombatService.server.luau)<br>[Main.client.luau](file:///x:/Datos%20Proyectos/robx/src/client/Main.client.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Callback bidireccional cliente-servidor, reseteo atómico de cámara y variables, teleport a cabina y restauración de botón [E]. | [§25](#25-resincronización-y-recuperación-robusta-tras-destrucción-de-dron) |
 | **Dificultad para apuntar en 3ra persona** | Falta de retícula/mira diegética alineada al vector de cámara y dispersión angular de proyectiles. | [DroneHUD.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneHUD.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Retícula holográfica universal centrada por `ViewportPointToRay`, escaneo cónico de 16° y fijación (*Target Lock*) de drones hostiles. | [§26](#26-mira-holográfica-universal-y-fijación-cónica-de-objetivos-en-3ra-persona-y-fpv) |
 | **Sin misiles guiados ni economía de munición** | No existía sistema de proyectiles guiados de capacidad limitada ni ciclo de recarga por entregas o compra. | [DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau)<br>[DroneHUD.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneHUD.luau)<br>[DeliveryManager.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DeliveryManager.luau)<br>[Main.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/Main.server.luau) | Misiles guiados con tecla [R] (Bézier 3D), rack de 3 proyectiles, recarga automática tras 3 entregas o compra por 150 PELAOCOINS en Base [M]. | [§27](#27-sistema-de-misiles-guiados-térmicos-r-rack-de-3-municiones-y-recarga-dual) |
+| **No deja ocupar el dron con la tecla [E]** | Split-brain de RemoteEvents (`CombatService` creaba `DroneFlightState` huérfano en `ReplicatedStorage` ignorado por `Main.server`), desincronización de flags `isPiloting`/`isFlying` al morir el avatar, y falta de prompt 3D. | [CombatService.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/CombatService.server.luau)<br>[Main.client.luau](file:///x:/Datos%20Proyectos/robx/src/client/Main.client.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau)<br>[Main.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/Main.server.luau) | Unificación canónica vía `NetworkEvents.Get`, sincronizador bidireccional `SetOnStateChangedCallback`, guardia `isCurrentlyPiloting` y `ProximityPrompt` 3D diegético en `TestDrone`. | [§28](#28-corrección-integral-de-enlace-de-pilotaje-con-tecla-e) |
+| **Disparos y láseres atraviesan las torres** | `hasLineOfSight` evaluaba `hitPart:IsDescendantOf(Workspace)` (siempre `true`), no ocluía partes de material Neon/Glass en rascacielos, proyectiles se tweeneaban sin raycast de trayectoria, y `LaserSight` era un box estático sin colisión. | [EnemyAIService.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/EnemyAIService.server.luau)<br>[CombatService.server.luau](file:///x:/Datos%20Proyectos/robx/src/server/CombatService.server.luau)<br>[DroneController.luau](file:///x:/Datos%20Proyectos/robx/src/shared/DroneController.luau) | Raycast físico multi-etapa con oclusión estricta de estructuras, clamping de trayectoria en la superficie de la torre, chispas de impacto, y detonación temprana de misiles en obstáculos. | [§29](#29-oclusión-balística-y-físicas-de-impacto-contra-estructuras-y-torres) |
 
 ---
 
@@ -58,6 +60,8 @@
 25. [Resincronización y Recuperación Robusta tras Destrucción de Dron](#25-resincronización-y-recuperación-robusta-tras-destrucción-de-dron)
 26. [Mira Holográfica Universal y Fijación Cónica de Objetivos en 3ra Persona y FPV](#26-mira-holográfica-universal-y-fijación-cónica-de-objetivos-en-3ra-persona-y-fpv)
 27. [Sistema de Misiles Guiados Térmicos [R], Rack de 3 Municiones y Recarga Dual (3 Entregas o 150 PELAOCOINS [M])](#27-sistema-de-misiles-guiados-térmicos-r-rack-de-3-municiones-y-recarga-dual)
+28. [Corrección Integral de Enlace de Pilotaje con Tecla [E]](#28-corrección-integral-de-enlace-de-pilotaje-con-tecla-e)
+29. [Oclusión Balística y Físicas de Impacto contra Estructuras y Torres](#29-oclusión-balística-y-físicas-de-impacto-contra-estructuras-y-torres)
 
 ---
 
@@ -874,6 +878,64 @@ El panel de telemetría de combate exhibe el rack de misiles en tiempo real:
   * Presionar `[M]` a bordo del dron o en la base dispara el RemoteEvent canónico `BuyMissiles`.
   * `Main.server.luau` valida la distancia a la Base Central ($\le 55\text{ studs}$) y descuenta **150 PELAOCOINS** de `leaderstats`.
   * El servidor replica `BuyMissilesConfirmed`, recargando el rack a 3/3 con sonido de sirena de hangar y confirmación en HUD.
+
+---
+
+## 28. Corrección Integral de Enlace de Pilotaje con Tecla [E]
+
+### 🔍 Diagnóstico de la Falla de Conexión
+Al intentar pilotar el dron con la tecla `[E]`, se presentaban tres anomalías concurrentes que impedían el despegue o dejaban la entrada congelada:
+1. **Split-Brain de RemoteEvents (`DroneFlightState`):**
+   `CombatService.server.luau` creaba una instancia huérfana de `DroneFlightState` directamente en `ReplicatedStorage` mediante una función local `ensureRemote`, mientras que `Main.server.luau` escuchaba exclusivamente el evento canónico dentro de la carpeta `CyberNetworkEvents`. Cuando el cliente disparaba `"StartFlying"`, el servidor principal nunca lo recibía. Como resultado, `TestDrone` permanecía permanentemente `Anchored = true`, impidiendo todo movimiento físico.
+2. **Desincronización de Banderas (`isPiloting` vs `isFlying`):**
+   Si el jugador moría o se reseteaba su personaje, `DroneController` detenía el vuelo (`self.isFlying = false`), pero la variable local `isPiloting` en `Main.client.luau` permanecía en `true`. Al presionar `[E]`, el script evaluaba `if not isPiloting then enterDrone() else exitDrone()`, llamando a `exitDrone()` en vez de permitirle abordar el dron.
+3. **Ausencia de Interacción Diegética 3D:**
+   No existía un elemento visual en el mundo que indicara al piloto la proximidad válida para abordar el dron además del botón en pantalla.
+
+### 🛠️ Solución Aplicada
+1. **Unificación Canónica de Red (`NetworkEvents.luau` & `CombatService.server.luau`):**
+   * Se retiró el `ensureRemote` local y se forzó a todos los servicios del servidor y cliente a consumir exclusivamente `NetworkEvents.Get(...)`.
+   * En `NetworkEvents.Init()`, cualquier RemoteEvent existente en la raíz de `ReplicatedStorage` es automáticamente consolidado y reparentado dentro de `CyberNetworkEvents`, garantizando una única referencia en memoria.
+2. **Guardia Atómica `isCurrentlyPiloting` y Sincronizador Bidireccional (`Main.client.luau`):**
+   * Se implementó la guardia reactiva:
+     ```luau
+     local function isCurrentlyPiloting(): boolean
+         return isPiloting or (myDrone and (myDrone :: any).isFlying == true)
+     end
+     ```
+   * Se enlazó el callback `myDrone:SetOnStateChangedCallback(function(flying) ... end)`, sincronizando atómicamente el estado del botón en pantalla y las banderas de pilotaje.
+   * Al morir el humanoide (`hum.Died`) o reaparecer el personaje (`CharacterAdded`), se fuerza automáticamente el reseteo a modo caminante y la restauración del botón a `[E] CONECTAR GAFAS FPV`.
+3. **ProximityPrompt 3D Diegético (`Main.server.luau`):**
+   * Se instaló un `ProximityPrompt` sobre `TestDrone` con texto `[E] Pilotar Dron - Cyber Drone FPV` (radio de 28 studs).
+   * Se apaga dinámicamente al despegar y se reactiva al aterrizar o ser destruido.
+
+---
+
+## 29. Oclusión Balística y Físicas de Impacto contra Estructuras y Torres
+
+### 🔍 Diagnóstico de Traspaso de Proyectiles y Láseres
+1. **Error Fatal en Verificación de Línea de Visión de la IA Hostil (`EnemyAIService.server.luau`):**
+   La condición de oclusión evaluaba:
+   `local hasLOS = not result or result.Instance == agent.targetPart or result.Instance:IsDescendantOf(agent.targetPart.Parent)`
+   Dado que `agent.targetPart` (`TestDrone`) es hijo directo de `Workspace`, `agent.targetPart.Parent` es `Workspace`. Como todas las torres, pilares y edificios son descendientes de `Workspace`, la expresión resultaba en **`true` para cualquier objeto impactado**, haciendo que las torretas Aegis-44 y los cazas Kuroshio dispararan a través de rascacielos enteros.
+2. **Falsa Transparencia en Materiales Neon/Glass (`hasLineOfSight` en `CombatService.server.luau`):**
+   Las torres y helipuertos poseen bandas de ventanas (`FloorBand`), esquineros (`NeonCorner`) y anillos perimetrales en material `Neon`. El algoritmo de validación omitía colisiones contra estos materiales tratándolos como invisibles, permitiendo que el cañón de plasma del jugador atravesara los edificios.
+3. **Trayectorias Cónicas y Proyectiles sin Colisión Físico-Temporal:**
+   * El cañón de plasma (`SpawnLocalPlasmaBolt`) proyectaba un tween cinemático directo desde la boquilla al objetivo sin verificar obstáculos intermedios.
+   * Los misiles guiados (`SpawnLocalMissile`) seguían su curva Bézier 3D atravesando estructuras sólidas.
+   * La mira láser (`LaserSight`) de la torreta Aegis-44 era un bloque rígido de 60 studs que penetraba paredes.
+
+### 🛠️ Solución Aplicada
+1. **Raycast Físico Multi-Etapa con Oclusión Estricta (`CombatService.server.luau`):**
+   * Nuevo trazador autoritativo que distingue entre efectos cosméticos inmateriales (`HoloSkyBeam`, `LaserSight`, proyectiles en vuelo) y estructuras arquitectónicas sólidas (`SupportPillar`, `BasePad`, paredes, helipuertos).
+   * Si el rayo choca contra una torre, `hasLOS` se vuelve `false`, `targetPart` se anula a `nil` (0 daño a la nave enemiga) y el punto terminal del disparo se recorta exactamente en la superficie del impacto (`hitPos`).
+2. **Interrupción y Chispas de Impacto en Superficie (`DroneController.luau`):**
+   * **Cañón de Plasma:** En `FireWeapon`, se efectúa un raycast de trayectoria previa. Si una torre interrumpe el arco de tiro, el perno de plasma local termina en la pared y genera un destello luminoso de impacto de 1.8 studs en vez de penetrar la estructura.
+   * **Misiles Guiados [R]:** En `SpawnLocalMissile`, cada fotograma de la curva Bézier se realiza un raycast diferencial entre la posición previa y la actual (`seg = pos - prevPos`). Al hacer contacto con cualquier obstáculo del mapa, el misil **detona inmediatamente en la superficie del rascacielos** con 9 studs de explosión y se destruye sin traspasar.
+   * **Fijación de Objetivos (Target Lock):** Se agregó un raycast de línea de visión en el escáner cónico de 16°. Si un dron enemigo se oculta tras una torre, la retícula no puede fijarlo a través del concreto.
+3. **Colisión Real de Mira Láser y Armas Hostiles (`EnemyAIService.server.luau`):**
+   * La mira láser (`LaserSight`) proyecta un raycast dinámico de 70 studs. Al chocar contra una torre, su longitud se acorta a la distancia exacta de impacto (`actualDist`), pintando el punto en la pared sin atravesarla.
+   * En `handleFiring`, si un rascacielos bloquea el vector al jugador, el disparo de la torreta Aegis-44 o el pulso microondas de Kuroshio queda cancelado.
 
 ---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*

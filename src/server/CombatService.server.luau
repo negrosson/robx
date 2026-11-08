@@ -50,26 +50,26 @@ local activeDrones: { [BasePart]: DroneState } = {}
 ----------------------------------------------------------------------
 -- RemoteEvents (Garantizados de forma inmediata y segura)
 ----------------------------------------------------------------------
+local NetworkEventsModule = ReplicatedStorage:WaitForChild("NetworkEvents", 10) :: ModuleScript
+local NetworkEvents = require(NetworkEventsModule)
+NetworkEvents.Init()
+
 local function ensureRemote(name: string): RemoteEvent
-	local ev = ReplicatedStorage:FindFirstChild(name) :: RemoteEvent?
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = name
-		ev.Parent = ReplicatedStorage
-	end
-	return ev :: RemoteEvent
+	return NetworkEvents.Get(name)
 end
 
 -- Cliente → Servidor: Solicitar disparo validado
-local onFireWeaponEvent     = ensureRemote("OnFireWeapon")
+local onFireWeaponEvent     = ensureRemote(NetworkEvents.Names.OnFireWeapon)
 -- Servidor → Cliente: Notificar daño recibido (HUD)
-local onDamagedEvent        = ensureRemote("OnDamageTaken")
+local onDamagedEvent        = ensureRemote(NetworkEvents.Names.OnDamageTaken)
 -- Servidor → Cliente: Notificar estado EMP
-local onEMPEvent            = ensureRemote("OnEMPActivated")
+local onEMPEvent            = ensureRemote(NetworkEvents.Names.OnEMPActivated)
 -- Servidor → Cliente: Actualizar datos de calor para HUD
-local onHeatUpdateEvent     = ensureRemote("OnHeatUpdate")
+local onHeatUpdateEvent     = ensureRemote(NetworkEvents.Names.OnHeatUpdate)
 -- Servidor → Cliente: Recompensa de caza
-local onBountyEvent         = ensureRemote("OnBountyAwarded")
+local onBountyEvent         = ensureRemote(NetworkEvents.Names.OnBountyAwarded)
+local flightStateEvent      = ensureRemote(NetworkEvents.Names.DroneFlightState)
+local droneDestroyedEvent   = ensureRemote(NetworkEvents.Names.DroneDestroyed)
 
 ----------------------------------------------------------------------
 -- API PÚBLICA — Registrar un dron en el sistema de combate
@@ -114,22 +114,56 @@ end
 -- LÓGICA INTERNA
 ----------------------------------------------------------------------
 
--- Verifica línea de visión entre dos posiciones (ignora cristales)
-local function hasLineOfSight(origin: Vector3, target: Vector3, exclude: { Instance }): boolean
-	local direction = target - origin
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = exclude
-
-	local result = Workspace:Raycast(origin, direction, params)
-	if not result then return true end
-
-	-- Permitir atravesar partes de baja densidad (cristal, neon)
-	local hitMat = result.Instance.Material
-	if hitMat == Enum.Material.Glass or hitMat == Enum.Material.Neon then
-		return true
+-- Verifica línea de visión estricta entre dos posiciones contra torres y obstáculos del mundo
+local function hasLineOfSight(origin: Vector3, target: Vector3, exclude: { Instance }, targetPart: BasePart?): (boolean, Vector3, BasePart?)
+	local curOrigin = origin
+	local totalVec = target - origin
+	local totalDist = totalVec.Magnitude
+	if totalDist < 0.1 then
+		return true, target, targetPart
 	end
-	return false
+
+	local dir = totalVec.Unit
+	local remainingDist = totalDist
+	local localExclude = table.clone(exclude)
+
+	local maxSteps = 6
+	while remainingDist > 0.1 and maxSteps > 0 do
+		maxSteps -= 1
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = localExclude
+
+		local result = Workspace:Raycast(curOrigin, dir * remainingDist, params)
+		if not result then
+			return true, target, targetPart
+		end
+
+		local hitInstance = result.Instance
+		if not hitInstance or not hitInstance:IsA("BasePart") then
+			return true, target, targetPart
+		end
+
+		-- Si impactó directamente en el objetivo o sus hijos
+		if hitInstance == targetPart or (targetPart and hitInstance:IsDescendantOf(targetPart)) then
+			return true, result.Position, hitInstance
+		end
+
+		-- Si impactó un efecto cosmético inmaterial (haces de luz, partículas, rayos visuales)
+		local name = hitInstance.Name
+		if name == "HoloSkyBeam" or name == "LaserSight" or name == "LocalPlasmaBolt" 
+			or name == "ServerPlasmaBolt" or name == "MicrowavePulse" or name == "MicrowaveCore"
+			or name == "GaussTracer" or name == "AccentBand" or name == "CommAntenna" then
+			table.insert(localExclude, hitInstance)
+			curOrigin = result.Position + dir * 0.1
+			remainingDist = (target - curOrigin).Magnitude
+		else
+			-- ¡Impacto contra un obstáculo sólido (torre, rascacielos, pilar, base, helipuerto, terreno)!
+			return false, result.Position, hitInstance
+		end
+	end
+
+	return true, target, targetPart
 end
 
 -- Genera explosión física al destruir un dron
@@ -182,14 +216,12 @@ local function destroyDrone(state: DroneState, killerPlayer: Player?)
 			isDestroyed = true,
 		})
 
-		local destroyedEv = ensureRemote("DroneDestroyed")
-		if destroyedEv then
-			destroyedEv:FireClient(state.owner)
+		if droneDestroyedEvent then
+			droneDestroyedEvent:FireClient(state.owner)
 		end
 
-		local flightEv = ensureRemote("DroneFlightState")
-		if flightEv then
-			flightEv:FireClient(state.owner, "StopFlying")
+		if flightStateEvent then
+			flightStateEvent:FireClient(state.owner, "StopFlying")
 		end
 	else
 		-- Dron enemigo: otorgar recompensa en PELAOCOINS al killerPlayer / atacante
@@ -349,7 +381,7 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		return
 	end
 
-	-- 2. Validar línea de visión (hitscan y microondas)
+	-- 2. Validar línea de visión y colisión estricta con obstáculos (torres, rascacielos, bases)
 	local shooterDrone: BasePart? = nil
 	for part, state in pairs(activeDrones) do
 		if state.owner == player then
@@ -363,11 +395,12 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 	local char = player.Character
 	if char then table.insert(excludeList, char) end
 
-	if weaponSpec.projectileSpeed == 0 then  -- hitscan / rayo
-		if not hasLineOfSight(originPos, targetPos, excludeList) then
-			warn(string.format("[CombatService] %s — Sin línea de visión para %s", player.Name, weaponId))
-			return
-		end
+	local hasLOS, actualHitPos, hitObstacle = hasLineOfSight(originPos, targetPos, excludeList, targetPart)
+	local finalTargetPos = actualHitPos or targetPos
+
+	if not hasLOS then
+		-- El disparo impactó contra una torre o estructura sólida; no impacta al objetivo
+		targetPart = nil
 	end
 
 	-- 3. Aplicar calor al PORTADOR
@@ -378,9 +411,9 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		end
 	end
 
-	-- 4. Adquisición de objetivo y raycast fallback en servidor
-	if not targetPart or not targetPart:IsA("BasePart") then
-		local rayDir = (targetPos - originPos).Unit * math.min(distance + 5, weaponSpec.range)
+	-- 4. Adquisición de objetivo y raycast fallback en servidor (solo si hay LOS)
+	if hasLOS and (not targetPart or not targetPart:IsA("BasePart")) then
+		local rayDir = (finalTargetPos - originPos).Unit * math.min(distance + 5, weaponSpec.range)
 		local rayParams = RaycastParams.new()
 		rayParams.FilterType = Enum.RaycastFilterType.Exclude
 		rayParams.FilterDescendantsInstances = excludeList
@@ -390,7 +423,7 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 			local hitPart = rayHit.Instance
 			if activeDrones[hitPart] then
 				targetPart = hitPart
-				targetPos = rayHit.Position
+				finalTargetPos = rayHit.Position
 			else
 				local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
 				if enemyFolder and hitPart:IsDescendantOf(enemyFolder) then
@@ -400,7 +433,7 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 					elseif hitPart:IsA("BasePart") and activeDrones[hitPart] then
 						targetPart = hitPart
 					end
-					targetPos = rayHit.Position
+					finalTargetPos = rayHit.Position
 				end
 			end
 		end
@@ -416,30 +449,31 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		bolt.CanCollide = false
 		bolt.CastShadow = false
 		bolt.Massless = true
-		bolt.CFrame = CFrame.lookAt(originPos, targetPos)
+		bolt.CFrame = CFrame.lookAt(originPos, finalTargetPos)
 		bolt.Parent = Workspace
 		Debris:AddItem(bolt, 3)
 
-		local flightDuration = math.clamp(distance / weaponSpec.projectileSpeed, 0.05, 2.5)
+		local boltFlightDist = (finalTargetPos - originPos).Magnitude
+		local flightDuration = math.clamp(boltFlightDist / weaponSpec.projectileSpeed, 0.05, 2.5)
 		local tween = TweenService:Create(
 			bolt,
 			TweenInfo.new(flightDuration, Enum.EasingStyle.Linear),
-			{ CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - originPos).Unit) }
+			{ CFrame = CFrame.lookAt(finalTargetPos, finalTargetPos + (finalTargetPos - originPos).Unit) }
 		)
 		tween:Play()
 		tween.Completed:Connect(function()
 			if bolt.Parent then
-				-- Pequeño destello de impacto en posición objetivo
+				-- Destello e impacto en la superficie (torre o dron)
 				local flash = Instance.new("Part")
 				flash.Shape = Enum.PartType.Ball
-				flash.Size = Vector3.new(1.6, 1.6, 1.6)
+				flash.Size = if not hasLOS then Vector3.new(2.4, 2.4, 2.4) else Vector3.new(1.6, 1.6, 1.6)
 				flash.Material = Enum.Material.Neon
-				flash.Color = bolt.Color
-				flash.Position = targetPos
+				flash.Color = if not hasLOS then Color3.fromRGB(255, 170, 30) else bolt.Color
+				flash.Position = finalTargetPos
 				flash.CanCollide = false
 				flash.Anchored = true
 				flash.Parent = Workspace
-				Debris:AddItem(flash, 0.12)
+				Debris:AddItem(flash, 0.14)
 				bolt:Destroy()
 			end
 		end)

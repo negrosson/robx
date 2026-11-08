@@ -438,7 +438,7 @@ local function handleFiring(agent: EnemyAgent)
 	local dist = (agent.part.Position - agent.targetPart.Position).Magnitude
 	if dist > agent.spec.fireRange then return end
 
-	-- Verificar línea de visión básica
+	-- Verificar línea de visión estricta contra torres, pilares y estructuras sólidas
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { agent.part, agentFolder }
@@ -446,7 +446,16 @@ local function handleFiring(agent: EnemyAgent)
 	local direction = agent.targetPart.Position - agent.part.Position
 	local result = Workspace:Raycast(agent.part.Position, direction, params)
 
-	local hasLOS = not result or result.Instance == agent.targetPart or (result.Instance and result.Instance:IsDescendantOf(agent.targetPart.Parent))
+	local hasLOS = false
+	if not result then
+		hasLOS = true
+	elseif result.Instance == agent.targetPart or result.Instance:IsDescendantOf(agent.targetPart) then
+		hasLOS = true
+	elseif agent.targetPlayer and agent.targetPlayer.Character and result.Instance:IsDescendantOf(agent.targetPlayer.Character) then
+		hasLOS = true
+	end
+
+	-- Si hay una torre, pilar o helipuerto bloqueando la línea de tiro, NO dispara a través de ella
 	if not hasLOS then return end
 
 	agent.lastFireTime = now
@@ -669,22 +678,43 @@ RunService.Heartbeat:Connect(function(dt: number)
 					local targetCF = CFrame.lookAt(part.Position, agent.targetPart.Position)
 					part.CFrame = part.CFrame:Lerp(targetCF, 0.28)
 				end
+				-- Raycast físico del láser para que colisione con torres y no las atraviese
+				local lOrigin = part.Position
+				local lDir = part.CFrame.LookVector * 70
+				local lParams = RaycastParams.new()
+				lParams.FilterType = Enum.RaycastFilterType.Exclude
+				lParams.FilterDescendantsInstances = { part, agentFolder }
+				local lHit = Workspace:Raycast(lOrigin, lDir, lParams)
+
+				local actualDist = if lHit then (lHit.Position - lOrigin).Magnitude else 70
+				local hitPoint = if lHit then lHit.Position else (lOrigin + lDir)
+
 				-- Alerta visual de pre-fijado: haz láser se torna rojo carmesí brillante e intenso
 				if laserSight then
 					laserSight.Color = Color3.fromRGB(255, 30, 30)
 					laserSight.Transparency = 0.15
-					laserSight.Size = Vector3.new(0.35, 0.35, 60)
-					laserSight.CFrame = part.CFrame * CFrame.new(0, 0, -30)
+					laserSight.Size = Vector3.new(0.35, 0.35, actualDist)
+					laserSight.CFrame = CFrame.lookAt(lOrigin, hitPoint) * CFrame.new(0, 0, -actualDist / 2)
 				end
 				handleFiring(agent)
 			else
-				-- Barrido rotativo suave de vigilancia de 360° en reposo
+				-- Barrido rotativo suave de vigilancia de 360° en reposo con colisión de láser
 				part.CFrame = part.CFrame * CFrame.Angles(0, math.rad(AI_TICK_RATE * 35), 0)
+				local lOrigin = part.Position
+				local lDir = part.CFrame.LookVector * 50
+				local lParams = RaycastParams.new()
+				lParams.FilterType = Enum.RaycastFilterType.Exclude
+				lParams.FilterDescendantsInstances = { part, agentFolder }
+				local lHit = Workspace:Raycast(lOrigin, lDir, lParams)
+
+				local actualDist = if lHit then (lHit.Position - lOrigin).Magnitude else 50
+				local hitPoint = if lHit then lHit.Position else (lOrigin + lDir)
+
 				if laserSight then
 					laserSight.Color = Color3.fromRGB(255, 180, 0)
 					laserSight.Transparency = 0.50
-					laserSight.Size = Vector3.new(0.2, 0.2, 50)
-					laserSight.CFrame = part.CFrame * CFrame.new(0, 0, -25)
+					laserSight.Size = Vector3.new(0.2, 0.2, actualDist)
+					laserSight.CFrame = CFrame.lookAt(lOrigin, hitPoint) * CFrame.new(0, 0, -actualDist / 2)
 				end
 			end
 			steerForce = Vector3.zero

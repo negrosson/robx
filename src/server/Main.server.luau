@@ -286,6 +286,20 @@ dronePart.CFrame = CFrame.new(0, 6.2, 0)
 dronePart.AssemblyLinearVelocity = Vector3.zero
 dronePart.AssemblyAngularVelocity = Vector3.zero
 
+-- ProximityPrompt diegético para interactuar con [E] de forma natural en el mundo 3D
+local pilotPrompt = dronePart:FindFirstChild("PilotPrompt") :: ProximityPrompt?
+if not pilotPrompt then
+	pilotPrompt = Instance.new("ProximityPrompt")
+	pilotPrompt.Name = "PilotPrompt"
+	pilotPrompt.ActionText = "Pilotar Dron"
+	pilotPrompt.ObjectText = "Cyber Drone FPV"
+	pilotPrompt.KeyboardKeyCode = Enum.KeyCode.E
+	pilotPrompt.HoldDuration = 0
+	pilotPrompt.MaxActivationDistance = 28
+	pilotPrompt.RequiresLineOfSight = false
+	pilotPrompt.Parent = dronePart
+end
+
 -- Restricciones físicas en el servidor
 local attachment = dronePart:FindFirstChild("FlightAttachment") :: Attachment?
 if not attachment then
@@ -328,6 +342,7 @@ flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 
 	if state == "StartFlying" then
 		dronePart.Anchored = false
+		if pilotPrompt then pilotPrompt.Enabled = false end
 		local success, err = pcall(function()
 			dronePart:SetNetworkOwner(player)
 		end)
@@ -350,6 +365,7 @@ flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 		dronePart.AssemblyLinearVelocity = Vector3.zero
 		dronePart.AssemblyAngularVelocity = Vector3.zero
 		dronePart.Anchored = true
+		if pilotPrompt then pilotPrompt.Enabled = true end
 		pcall(function()
 			dronePart:SetNetworkOwnershipAuto()
 		end)

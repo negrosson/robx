@@ -80,11 +80,15 @@ local droneReady        = false
 local DroneController: any = nil
 local CyberGoggles: any    = nil
 
+local function isCurrentlyPiloting(): boolean
+	return isPiloting or (myDrone and (myDrone :: any).isFlying == true)
+end
+
 ----------------------------------------------------------------------
 -- 3. FUNCIONES DE VUELO
 ----------------------------------------------------------------------
 local function enterDrone()
-	if isPiloting then return end
+	if isCurrentlyPiloting() then return end
 
 	if not droneReady or myDrone == nil then
 		dbg("Dron NO listo aún, espera...")
@@ -114,7 +118,7 @@ local function enterDrone()
 end
 
 local function exitDrone()
-	if not isPiloting then return end
+	if not isCurrentlyPiloting() then return end
 	isPiloting = false
 
 	dbg("Desconectando visor FPV...")
@@ -129,33 +133,44 @@ local function exitDrone()
 	end
 end
 
--- Click en botón
+-- Click en botón inferior
 toggleBtn.MouseButton1Click:Connect(function()
-	if not isPiloting then enterDrone() else exitDrone() end
+	if not isCurrentlyPiloting() then enterDrone() else exitDrone() end
+end)
+
+-- Interacción con ProximityPrompt 3D [E] en el mundo
+local ProximityPromptService = game:GetService("ProximityPromptService")
+ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+	if player == localPlayer and prompt.Name == "PilotPrompt" then
+		if not isCurrentlyPiloting() then
+			enterDrone()
+		end
+	end
 end)
 
 ----------------------------------------------------------------------
 -- FIX CRÍTICO: Tecla E sin filtro gpe para permitir captura siempre.
--- Roblox marca E/F como gpe=false normalmente, pero el sistema de
--- detección de proximidad puede cambiarlos. Usamos GetKeysPressed() y
--- una conexión directa sin verificar gpe para E y F específicamente.
+-- Se sincroniza con isCurrentlyPiloting() para evitar desfasajes.
 ----------------------------------------------------------------------
 UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
 	-- Solo bloquear si está escribiendo en el chat (TextBox con foco)
 	if gpe then
-		-- Verificar si el TextBox del chat es el culpable
 		local focused = UserInputService:GetFocusedTextBox()
-		if focused then return end  -- Usuario está escribiendo → ignorar
-		-- Si gpe=true pero NO hay TextBox con foco, fue el ProximityPrompt u otro sistema
-		-- → permitir igual para E y F
+		if focused then return end
 	end
 
 	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
 	if input.KeyCode == Enum.KeyCode.E then
-		if not isPiloting then enterDrone() else exitDrone() end
+		if not isCurrentlyPiloting() then
+			enterDrone()
+		else
+			exitDrone()
+		end
 	elseif input.KeyCode == Enum.KeyCode.F then
-		if isPiloting then exitDrone() end
+		if isCurrentlyPiloting() then
+			exitDrone()
+		end
 	end
 end)
 
@@ -206,14 +221,30 @@ task.spawn(function()
 		warn("[CLIENTE] CyberGoggles falló:", gogglesResult)
 	end
 
-	-- Equipar gafas en avatar actual y futuros spawns
+	-- Equipar gafas en avatar actual y futuros spawns, y conectar reseteo de muerte
+	local function onCharacterReset()
+		isPiloting = false
+		if myDrone and (myDrone :: any).isFlying then
+			pcall(function() (myDrone :: any):StopFlying() end)
+		end
+		setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+	end
+
 	local function setupGoggles(char: Model)
 		if CyberGoggles then
 			pcall(function() CyberGoggles.Attach(char) end)
 		end
+		local hum = char:WaitForChild("Humanoid", 5) :: Humanoid?
+		if hum then
+			hum.Died:Connect(onCharacterReset)
+		end
 	end
+
 	if localPlayer.Character then setupGoggles(localPlayer.Character) end
-	localPlayer.CharacterAdded:Connect(setupGoggles)
+	localPlayer.CharacterAdded:Connect(function(char)
+		onCharacterReset()
+		setupGoggles(char)
+	end)
 
 	-- Cargar DroneController
 	local okCtrl, ctrlResult = pcall(function()
@@ -244,30 +275,15 @@ task.spawn(function()
 	end
 	dbg("TestDrone encontrado: " .. droneEntity:GetFullName())
 
-	-- Verificar RemoteEvents del servidor
-	local flightEvent = ReplicatedStorage:FindFirstChild("DroneFlightState") :: RemoteEvent?
-	if not flightEvent then
-		local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents") :: Folder?
-		if evFolder then
-			flightEvent = evFolder:FindFirstChild("DroneFlightState") :: RemoteEvent?
-		end
-	end
-	if not flightEvent then
-		flightEvent = ReplicatedStorage:WaitForChild("DroneFlightState", 8) :: RemoteEvent?
-	end
-	if flightEvent then
-		dbg("DroneFlightState RemoteEvent OK")
-	end
-
-	-- Asegurar que los eventos de entrega estén replicados
-	local evFolder = ReplicatedStorage:FindFirstChild("CyberNetworkEvents") :: Folder?
-	if not evFolder then
-		pcall(function() evFolder = ReplicatedStorage:WaitForChild("CyberNetworkEvents", 4) :: Folder? end)
-	end
-	if evFolder then
-		pcall(function() evFolder:WaitForChild("DeliveryCompleted", 3) end)
-		pcall(function() evFolder:WaitForChild("DeliveryConfirmed", 3) end)
-	end
+	-- Resolver eventos de red canónicos mediante NetworkEvents
+	local NetworkEvents = require(neModule :: ModuleScript)
+	local flightEvent   = NetworkEvents.Get(NetworkEvents.Names.DroneFlightState)
+	local destroyedEv   = NetworkEvents.Get(NetworkEvents.Names.DroneDestroyed)
+	local onDmg         = NetworkEvents.Get(NetworkEvents.Names.OnDamageTaken)
+	local onEMP         = NetworkEvents.Get(NetworkEvents.Names.OnEMPActivated)
+	local onHeat        = NetworkEvents.Get(NetworkEvents.Names.OnHeatUpdate)
+	local onBounty      = NetworkEvents.Get(NetworkEvents.Names.OnBountyAwarded)
+	local buyConfirmed  = NetworkEvents.Get(NetworkEvents.Names.BuyMissilesConfirmed)
 
 	-- Crear instancia del controlador (con timeout de protección)
 	dbg("Creando DroneController.new()...")
@@ -286,11 +302,23 @@ task.spawn(function()
 	setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
 	print("[CLIENTE v5] ¡Sistema de vuelo completamente inicializado!")
 
+	-- Sincronización bidireccional de estado de vuelo
+	if myDrone and (myDrone :: any).SetOnStateChangedCallback then
+		(myDrone :: any):SetOnStateChangedCallback(function(flying: boolean)
+			isPiloting = flying
+			if flying then
+				setBtn("[F] DESCONECTAR VISOR FPV", 255, 220, 0)
+			else
+				setBtn("[E] CONECTAR GAFAS FPV (PILOTAR DRON)", 0, 255, 230)
+			end
+		end)
+	end
+
 	-- Callback de auto-recuperación cuando el dron es destruido en combate
 	if myDrone and (myDrone :: any).SetOnDestroyedCallback then
 		(myDrone :: any):SetOnDestroyedCallback(function()
 			dbg("Dron destruido en combate - sincronizando interfaz a modo caminante...")
-			if isPiloting then
+			if isCurrentlyPiloting() then
 				exitDrone()
 			end
 		end)
@@ -299,7 +327,7 @@ task.spawn(function()
 	-- Listener de desconexión y destrucción emitida por el servidor
 	local function handleServerStopFlight()
 		dbg("Servidor ordenó StopFlying / DroneDestroyed - reseteando a Base Central")
-		if isPiloting then
+		if isCurrentlyPiloting() then
 			exitDrone()
 		end
 		if myDrone and (myDrone :: any).ResetOnDestroyed then
@@ -315,69 +343,46 @@ task.spawn(function()
 		end)
 	end
 
-	task.spawn(function()
-		local destroyedEv = ReplicatedStorage:WaitForChild("DroneDestroyed", 10) :: RemoteEvent?
-		if destroyedEv and destroyedEv:IsA("RemoteEvent") then
-			destroyedEv.OnClientEvent:Connect(function()
-				handleServerStopFlight()
-			end)
-		end
-	end)
+	if destroyedEv then
+		destroyedEv.OnClientEvent:Connect(function()
+			handleServerStopFlight()
+		end)
+	end
 
-	-- Conectar eventos de combate del servidor
-	task.spawn(function()
-		local onDmg = ReplicatedStorage:WaitForChild("OnDamageTaken", 10)
-		if onDmg and onDmg:IsA("RemoteEvent") then
-			(onDmg :: RemoteEvent).OnClientEvent:Connect(function(damageData: any)
-				if myDrone then pcall(function() myDrone:ApplyDamage(damageData) end) end
-			end)
-			dbg("OnDamageTaken conectado")
-		end
-	end)
+	if onDmg then
+		onDmg.OnClientEvent:Connect(function(damageData: any)
+			if myDrone then pcall(function() myDrone:ApplyDamage(damageData) end) end
+		end)
+	end
 
-	task.spawn(function()
-		local onEMP = ReplicatedStorage:WaitForChild("OnEMPActivated", 10)
-		if onEMP and onEMP:IsA("RemoteEvent") then
-			(onEMP :: RemoteEvent).OnClientEvent:Connect(function(dur: number)
-				if myDrone then pcall(function() myDrone:TriggerEMPLocal(dur) end) end
-			end)
-			dbg("OnEMPActivated conectado")
-		end
-	end)
+	if onEMP then
+		onEMP.OnClientEvent:Connect(function(dur: number)
+			if myDrone then pcall(function() myDrone:TriggerEMPLocal(dur) end) end
+		end)
+	end
 
-	task.spawn(function()
-		local onHeat = ReplicatedStorage:WaitForChild("OnHeatUpdate", 10)
-		if onHeat and onHeat:IsA("RemoteEvent") then
-			(onHeat :: RemoteEvent).OnClientEvent:Connect(function(heatAmt: number)
-				if myDrone then pcall(function() myDrone:ApplyHeat(heatAmt) end) end
-			end)
-			dbg("OnHeatUpdate conectado")
-		end
-	end)
+	if onHeat then
+		onHeat.OnClientEvent:Connect(function(heatAmt: number)
+			if myDrone then pcall(function() myDrone:ApplyHeat(heatAmt) end) end
+		end)
+	end
 
-	task.spawn(function()
-		local onBounty = ReplicatedStorage:WaitForChild("OnBountyAwarded", 10)
-		if onBounty and onBounty:IsA("RemoteEvent") then
-			(onBounty :: RemoteEvent).OnClientEvent:Connect(function(data: any)
-				if myDrone and myDrone.hud then
-					local bounty = if typeof(data) == "table" then data.bounty else (data or 35)
-					pcall(function()
-						myDrone.hud:ShowHint(string.format("¡HOSTIL NEUTRALIZADO! +%d PELAOCOINS 💰", bounty), false)
-					end)
-				end
-			end)
-			dbg("OnBountyAwarded conectado")
-		end
-	end)
+	if onBounty then
+		onBounty.OnClientEvent:Connect(function(data: any)
+			if myDrone and myDrone.hud then
+				local bounty = if typeof(data) == "table" then data.bounty else (data or 35)
+				pcall(function()
+					myDrone.hud:ShowHint(string.format("¡HOSTIL NEUTRALIZADO! +%d PELAOCOINS 💰", bounty), false)
+				end)
+			end
+		end)
+	end
 
-	task.spawn(function()
-		local buyConfirmed = ReplicatedStorage:WaitForChild("BuyMissilesConfirmed", 10) :: RemoteEvent?
-		if buyConfirmed and buyConfirmed:IsA("RemoteEvent") then
-			buyConfirmed.OnClientEvent:Connect(function(count: number)
-				if myDrone and (myDrone :: any).ReloadMissiles then
-					(myDrone :: any):ReloadMissiles(count or 3, "compra")
-				end
-			end)
-		end
-	end)
+	if buyConfirmed then
+		buyConfirmed.OnClientEvent:Connect(function(count: number)
+			if myDrone and (myDrone :: any).ReloadMissiles then
+				(myDrone :: any):ReloadMissiles(count or 3, "compra")
+			end
+		end)
+	end
 end)
