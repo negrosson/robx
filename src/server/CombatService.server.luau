@@ -12,7 +12,8 @@ local Workspace         = game:GetService("Workspace")
 local TweenService      = game:GetService("TweenService")
 
 -- Módulos compartidos (src/shared/ → ReplicatedStorage)
-local DroneWeapons = require(ReplicatedStorage:WaitForChild("DroneWeapons", 8) :: ModuleScript)
+local DroneWeaponsModule = (ReplicatedStorage:FindFirstChild("DroneWeapons") or ReplicatedStorage:WaitForChild("DroneWeapons", 30)) :: ModuleScript
+local DroneWeapons = require(DroneWeaponsModule)
 
 ----------------------------------------------------------------------
 -- CONSTANTES

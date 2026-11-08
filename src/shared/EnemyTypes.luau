@@ -46,12 +46,12 @@ export type EnemySpec = {
 ----------------------------------------------------------------------
 -- PALETA
 ----------------------------------------------------------------------
-local COL_SCRAP    = Color3.fromRGB(80, 65, 50)     -- chatarrero oxidado
-local COL_RUST     = Color3.fromRGB(140, 60, 30)
-local COL_CORP     = Color3.fromRGB(13, 13, 13)     -- #0D0D0D corporativo
-local COL_CERAMIC  = Color3.fromRGB(255, 255, 255)  -- #FFFFFF
-local COL_NEON_RED = Color3.fromRGB(255, 0, 63)     -- #FF003F
-local COL_WARN     = Color3.fromRGB(255, 180, 0)    -- ámbar de alerta
+local COL_SCRAP         = Color3.fromRGB(80, 65, 50)      -- chatarrero oxidado
+local COL_HAZARD_ORANGE = Color3.fromRGB(255, 95, 0)      -- ámbar óxido brillante neón
+local COL_CORP          = Color3.fromRGB(13, 13, 13)      -- #0D0D0D corporativo
+local COL_CERAMIC       = Color3.fromRGB(255, 255, 255)   -- #FFFFFF
+local COL_NEON_RED      = Color3.fromRGB(255, 0, 63)      -- #FF003F
+local COL_WARN          = Color3.fromRGB(255, 180, 0)     -- ámbar de alerta
 
 ----------------------------------------------------------------------
 -- 1. SCAV-GNATS — Enjambre Chatarrero
@@ -82,8 +82,8 @@ local SCAV_GNATS: EnemySpec = {
 	xpReward        = 15,
 
 	primaryColor    = COL_SCRAP,
-	accentColor     = COL_RUST,
-	scale           = Vector3.new(0.5, 0.3, 0.5),  -- pequeños y compactos
+	accentColor     = COL_HAZARD_ORANGE,
+	scale           = Vector3.new(0.65, 0.45, 0.65),  -- compactos pero claramente visibles
 }
 
 ----------------------------------------------------------------------

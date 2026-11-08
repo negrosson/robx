@@ -574,6 +574,76 @@ Una auditoría exhaustiva reveló las causas por las cuales las unidades enemiga
    * Montaje de Aegis-44 asentada firmemente sobre la cornisa de Torre B a $Y = 52.5$ studs.
 
 ---
+
+## 21. Auditoría Integral Multi-Fase: Causa Raíz de Desaparición de Enemigos y Solución Arquitectónica Definitiva
+
+### Diagnóstico Forense Multi-Fase: ¿Por qué no se veían los enemigos?
+
+Tras una revisión integral de los scripts del servidor y cliente a lo largo de las 5 fases, se identificaron los siguientes 6 bloqueos arquitectónicos simultáneos:
+
+1. **Despawn Destructivo en el Bucle del Threat Director (`EnemyAIService.server.luau`):**
+   * El bucle a 1 Hz contenía la condición:
+     ```luau
+     local isFlying = (not dronePart.Anchored)
+     local distToBase = (dronePos - Vector3.new(0, 4, 0)).Magnitude
+     if not isFlying or distToBase < 65 then
+         for _, zone in pairs(threatZones) do
+             if zone.isActive then deactivateZone(zone) end
+         end
+         continue
+     end
+     ```
+   * Al iniciar el servidor o al reaparecer el jugador, `TestDrone.Anchored == true` (esperando que el piloto presione [E]), por lo que `isFlying == false`.
+   * El bucle ejecutaba `continue` cada segundo, purgando y destruyendo con `part:Destroy()` cualquier enemigo existente y **bloqueando el código de activación**. Por ende, `Workspace.EnemyDrones` permanecía 100% vacío.
+   * Incluso si el piloto lograba volar hacia Torre A y activar la zona, al regresar a Base para entregar el paquete (`distToBase < 65`) o al aterrizar (`isFlying == false`), el servidor **exterminaba instantáneamente todos los enemigos del mapa**.
+
+2. **Despawn Forzado al Salir de FPV (`Main.server.luau`):**
+   * En `flightStateEvent.OnServerEvent`, al recibir `"StopFlying"` (tecla F o desacople), el servidor ejecutaba:
+     `_G.EnemyAIService.DeactivateAllZones()`
+   * Si el jugador se bajaba del dron para inspeccionar el mapa o reabastecerse, todos los enemigos del mundo eran eliminados de inmediato.
+
+3. **Ausencia de Invocación Inicial de Sectores:**
+   * Las zonas tácticas (`Zone_TorreA` y `Zone_TorreB`) comenzaban con `isActive = false` y ninguna función de arranque las inicializaba al nacer el servidor.
+
+4. **Vulnerabilidad de Timeout en `WaitForChild(..., 8)`:**
+   * Tanto `EnemyAIService` como `CombatService` realizaban `require(ReplicatedStorage:WaitForChild(..., 8))`.
+   * En cargas de Roblox Studio o sincronizaciones lentas de Rojo, si la réplica tardaba más de 8 segundos, arrojaba un fallo fatal `attempt to call require with nil`, terminando el script antes de registrar `_G.EnemyAIService` o `_G.CombatService`.
+
+5. **Restricción Exclusiva a `Workspace.TestDrone`:**
+   * `findNearestPlayerDrone` únicamente consultaba `Workspace:FindFirstChild("TestDrone")`. Si el desarrollador o jugador exploraba a pie o el dron estaba anclado, los enemigos no reconocían ningún objetivo.
+
+6. **Alcance Limitado del Radar en el HUD (`DroneHUD.luau`):**
+   * El radar poseía `RADAR_MAX_DIST = 250` studs. Dado que Torre A se sitúa a 257.4 studs de la Base Central (`(160, 95, -180)`), los enemigos de Torre A no aparecían en el radar mientras el jugador permanecía en la plataforma de inicio.
+
+---
+
+### Solución Arquitectónica Implementada
+
+1. **Persistencia Espacial de Sectores Hostiles:**
+   * Se eliminó el despawn forzado por distancia o por estar en reposo. Los sectores hostiles (Torre A y Torre B) existen persistentemente en el mundo desde el segundo cero.
+   * Al iniciar el servidor, una rutina asíncrona espera la inicialización de `CombatService` y ejecuta `activateZone()` para Torre A (3 Scav-Gnats en enjambre) y Torre B (Torreta Aegis-44 e Interceptor Kuroshio-V).
+
+2. **Burbuja de Seguridad de Base Central (Desenganche Táctico vs Despawn):**
+   * En lugar de destruir a los enemigos cuando el jugador está en la Base, la Base posee un perímetro defensivo inmune ($\text{radio} = 65$ studs).
+   * En `findNearestPlayerTarget`: si el objetivo (dron o piloto a pie) se encuentra a $< 65$ studs de la Base `(0, 4, 0)`, los enemigos lo ignoran por completo (`targetPart = nil`).
+   * En el bucle de IA a 10 Hz: si una nave hostil se acerca a $< 70$ studs de la Base, se aplica una fuerza vectorial de repulsión hacia su `homeCenter`, impidiendo invasiones a la Base pero manteniéndola visible patrullando su sector.
+
+3. **Ciclo de Autorreaparición Táctica Post-Combate:**
+   * El bucle del Director de Amenazas a 1 Hz monitorea la salud de cada sector:
+     * Si el jugador derriba a todos los enemigos de un sector, la zona pasa a estado despejado y se inicia un temporizador de enfriamiento táctico (35s en Torre A, 45s en Torre B).
+     * Una vez transcurrido el cooldown, el servidor genera automáticamente una nueva oleada de refuerzos con `activateZone()`.
+
+4. **Montaje Físico Libre de Tirones Gravitatorios:**
+   * `buildEnemyPart` mantiene `Anchored = true` durante el ensamblaje de attachments, `LinearVelocity` ($10^6$ N) y `AlignOrientation` ($10^6$ N$\cdot$m), desanclando la nave únicamente al finalizar el montaje, eliminando cualquier dip gravitatorio inicial.
+
+5. **Carga Asíncrona Robusta de Módulos:**
+   * Se reemplazaron los `WaitForChild(..., 8)` por selectores elásticos `FindFirstChild(...) or WaitForChild(..., 30)`, protegiendo la ejecución ante demoras de inicialización de DataModel.
+
+6. **Radar Táctico Ampliado a 320 Studs y Salencia Neón:**
+   * Cobertura de radar en `DroneHUD.luau` ampliada a 320 studs, permitiendo visualizar los blips de Torre A (257 studs) y Torre B (248 studs) desde la base de despegue.
+   * Scav-Gnats actualizados con acento neón ámbar/naranja brillante (`#FF5F00`) y escala de 0.65x, logrando una silueta diegética inconfundible en el cielo metropolitano.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro y Sistema de Hostilidad.*
 
 

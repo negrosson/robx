@@ -1111,8 +1111,8 @@ function DroneHUD.Update(
 		self.empStatusLabel.TextColor3 = COLOR_NEON_CYAN
 	end
 
-	-- 9. Radar Táctico de Amenazas 360° (Rango: 250 studs)
-	local RADAR_MAX_DIST = 250
+	-- 9. Radar Táctico de Amenazas 360° (Rango: 320 studs para cobertura total del sector metropolitano)
+	local RADAR_MAX_DIST = 320
 	local RADAR_RADIUS_PX = 52
 	local delta = dt or 0.016
 

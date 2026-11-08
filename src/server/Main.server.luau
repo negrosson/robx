@@ -340,12 +340,9 @@ flightStateEvent.OnServerEvent:Connect(function(player: Player, state: any)
 			_G.CombatService.Register(dronePart, 100, 100, 8, 0.0, 0.55, player)
 		end
 	elseif state == "StopFlying" then
-		-- Desregistrar del servicio de combate y replegar agentes hostiles
+		-- Desregistrar dron del jugador del servicio de combate
 		if _G.CombatService and _G.CombatService.Unregister then
 			_G.CombatService.Unregister(dronePart)
-		end
-		if _G.EnemyAIService and _G.EnemyAIService.DeactivateAllZones then
-			_G.EnemyAIService.DeactivateAllZones()
 		end
 
 		dronePart.AssemblyLinearVelocity = Vector3.zero

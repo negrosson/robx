@@ -10,7 +10,8 @@ local RunService        = game:GetService("RunService")
 local Workspace         = game:GetService("Workspace")
 local Debris            = game:GetService("Debris")
 
-local EnemyTypes = require(ReplicatedStorage:WaitForChild("EnemyTypes", 8) :: ModuleScript)
+local EnemyTypesModule = (ReplicatedStorage:FindFirstChild("EnemyTypes") or ReplicatedStorage:WaitForChild("EnemyTypes", 30)) :: ModuleScript
+local EnemyTypes = require(EnemyTypesModule)
 
 ----------------------------------------------------------------------
 -- CONSTANTES
@@ -73,23 +74,18 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	part.Size         = spec.scale * 4.5  -- escala relativa al TestDrone estándar (4.5)
 	part.Material     = Enum.Material.Metal
 	part.Color        = spec.primaryColor
-	part.Anchored     = isTurret
+	part.Anchored     = true              -- Mantener anclado temporalmente durante ensamblaje
 	part.CanCollide   = false             -- Evita atascos de colisión física con edificios o drones
 	part.CustomPhysicalProperties = PhysicalProperties.new(0.01, 0, 0, 0, 0) -- Densidad ultra-ligera
 	part.CFrame       = spawnCF
+	part.AssemblyLinearVelocity = Vector3.zero
+	part.AssemblyAngularVelocity = Vector3.zero
 	part.Parent       = agentFolder
-
-	-- Control autoritativo estricto del servidor para físicas de NPC
-	if not isTurret then
-		pcall(function()
-			part:SetNetworkOwner(nil)
-		end)
-	end
 
 	-- Banda de acento neón (embebida directamente como hija para no duplicar blips en el radar)
 	local band = Instance.new("Part")
 	band.Name       = "AccentBand"
-	band.Size       = Vector3.new(part.Size.X * 0.95, 0.3, part.Size.Z * 0.95)
+	band.Size       = Vector3.new(part.Size.X * 0.95, 0.35, part.Size.Z * 0.95)
 	band.Material   = Enum.Material.Neon
 	band.Color      = spec.accentColor
 	band.CanCollide = false
@@ -128,11 +124,19 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	ao.Enabled        = not isTurret
 	ao.Parent         = part
 
+	-- Una vez vinculados los actuadores, desanclar si es unidad móvil
+	part.Anchored = isTurret
+	if not isTurret then
+		pcall(function()
+			part:SetNetworkOwner(nil)
+		end)
+	end
+
 	-- Punto de luz del acento
 	local pl = Instance.new("PointLight")
 	pl.Color      = spec.accentColor
-	pl.Brightness = 3.5
-	pl.Range      = 22
+	pl.Brightness = 4.5
+	pl.Range      = 28
 	pl.Parent     = part
 
 	-- Silueta Highlight neón diegética para visibilidad impecable a larga distancia
@@ -140,9 +144,9 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	hl.Name = "EnemyHighlight"
 	hl.Adornee = part
 	hl.FillColor = spec.accentColor
-	hl.FillTransparency = 0.65
+	hl.FillTransparency = 0.55
 	hl.OutlineColor = spec.accentColor
-	hl.OutlineTransparency = 0.05
+	hl.OutlineTransparency = 0.0
 	hl.Parent = part
 
 	-- Efectos específicos por arquetipo
@@ -256,20 +260,38 @@ local function separation(agentPos: Vector3, neighbors: { BasePart }, minDist: n
 	return steer
 end
 
--- Busca el dron del jugador activo más cercano
-local function findNearestPlayerDrone(agentPos: Vector3): (Player?, BasePart?)
+-- Busca el objetivo del jugador activo más cercano (dron en vuelo o piloto fuera de Base)
+local function findNearestPlayerTarget(agentPos: Vector3): (Player?, BasePart?)
 	local bestDist = math.huge
 	local bestPlayer: Player? = nil
 	local bestPart: BasePart? = nil
+	local baseSafeCenter = Vector3.new(0, 4, 0)
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		local dronePart = Workspace:FindFirstChild("TestDrone") :: BasePart?
-		if dronePart then
-			local d = (dronePart.Position - agentPos).Magnitude
-			if d < bestDist then
-				bestDist   = d
-				bestPlayer = player
-				bestPart   = dronePart
+		local char = player.Character
+		local charRoot = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart") :: BasePart?)
+
+		-- Priorizar dron si está activo/volando; de lo contrario el personaje del jugador
+		local candidate: BasePart? = nil
+		if dronePart and not dronePart.Anchored then
+			candidate = dronePart
+		elseif charRoot then
+			candidate = charRoot
+		elseif dronePart then
+			candidate = dronePart
+		end
+
+		if candidate then
+			-- Escudo defensivo de Base Central (< 65 studs): no adquirir objetivo dentro de Base
+			local distToBase = (candidate.Position - baseSafeCenter).Magnitude
+			if distToBase >= 65 then
+				local d = (candidate.Position - agentPos).Magnitude
+				if d < bestDist then
+					bestDist   = d
+					bestPlayer = player
+					bestPart   = candidate
+				end
 			end
 		end
 	end
@@ -469,8 +491,8 @@ RunService.Heartbeat:Connect(function(dt: number)
 			continue
 		end
 
-		-- Detectar jugador más cercano en rango
-		local targetPlayer, targetPart = findNearestPlayerDrone(part.Position)
+		-- Detectar jugador más cercano en rango (fuera del perímetro seguro de Base)
+		local targetPlayer, targetPart = findNearestPlayerTarget(part.Position)
 		local inRange = false
 
 		if targetPart then
@@ -566,6 +588,22 @@ RunService.Heartbeat:Connect(function(dt: number)
 			end
 		end
 
+		-- Escudo de seguridad perimetral de Base Central: si una nave enemiga se aproxima a < 70 studs, forzar retirada
+		if mode ~= "turret" then
+			local distToBase = (part.Position - Vector3.new(0, 4, 0)).Magnitude
+			if distToBase < 70 then
+				local toHome = (agent.homeCenter or part.Position) - part.Position
+				if toHome.Magnitude > 1 then
+					steerForce = toHome.Unit * agent.spec.maxSpeed
+				else
+					local fleeBase = (part.Position - Vector3.new(0, 4, 0)).Unit
+					steerForce = fleeBase * agent.spec.maxSpeed
+				end
+				agent.targetPart = nil
+				agent.targetPlayer = nil
+			end
+		end
+
 		-- ---- APLICAR VELOCIDAD VÍA LinearVelocity ----
 		if mode ~= "turret" then
 			-- Integrar steering hacia velocidad actual con inercia
@@ -618,15 +656,15 @@ local threatZones: { [string]: ThreatZone } = {
 		name = "Sector Industrial (Torre A)",
 		threatLevel = "hostile",
 		center = Vector3.new(160, 95, -180),
-		activationRadius = 220,
-		deactivationRadius = 320,
+		activationRadius = 260,
+		deactivationRadius = 600,
 		respawnCooldown = 35,
 		lastClearedTime = 0,
 		archetypes = {
-			-- Enjambre Scav-Gnats sobrevolando y patrullando la azotea de Torre A
-			{ specId = "scav_gnats", offset = Vector3.new(-25, 5, 25), difficulty = 0.1 },
-			{ specId = "scav_gnats", offset = Vector3.new(25, 10, -20), difficulty = 0.15 },
-			{ specId = "scav_gnats", offset = Vector3.new(0, 0, 30),    difficulty = 0.2 },
+			-- Enjambre Scav-Gnats sobrevolando en patrulla aérea continua sobre Torre A
+			{ specId = "scav_gnats", offset = Vector3.new(-16, 12, 16), difficulty = 0.1 },
+			{ specId = "scav_gnats", offset = Vector3.new(16, 16, -14), difficulty = 0.15 },
+			{ specId = "scav_gnats", offset = Vector3.new(0, 10, 20),   difficulty = 0.2 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -636,15 +674,15 @@ local threatZones: { [string]: ThreatZone } = {
 		name = "Sector Black Ops (Torre B)",
 		threatLevel = "black_ops",
 		center = Vector3.new(-200, 50, 140),
-		activationRadius = 250,
-		deactivationRadius = 350,
+		activationRadius = 280,
+		deactivationRadius = 600,
 		respawnCooldown = 45,
 		lastClearedTime = 0,
 		archetypes = {
 			-- Torreta Aegis asentada firmemente sobre la cornisa de la azotea de Torre B (Y = 52.5)
 			{ specId = "aegis_44",  offset = Vector3.new(14, 2.5, 14), difficulty = 0.25 },
-			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 80)
-			{ specId = "kuroshio_v", offset = Vector3.new(-15, 30, 15), difficulty = 0.35 },
+			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 78)
+			{ specId = "kuroshio_v", offset = Vector3.new(-15, 28, 15), difficulty = 0.35 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -654,7 +692,7 @@ local threatZones: { [string]: ThreatZone } = {
 local function activateZone(zone: ThreatZone)
 	if zone.isActive then return end
 	local now = os.clock()
-	if (now - zone.lastClearedTime) < zone.respawnCooldown then
+	if zone.lastClearedTime > 0 and (now - zone.lastClearedTime) < zone.respawnCooldown then
 		return
 	end
 
@@ -669,7 +707,7 @@ local function activateZone(zone: ThreatZone)
 		end
 	end
 
-	print(string.format("[ThreatDirector] ¡Zona '%s' ACTIVADA! %d unidades hostiles en vuelo.", zone.name, #zone.activeParts))
+	print(string.format("[ThreatDirector] ¡Zona '%s' ACTIVADA! %d unidades hostiles patrullando.", zone.name, #zone.activeParts))
 end
 
 local function deactivateZone(zone: ThreatZone)
@@ -698,47 +736,18 @@ local function deactivateZone(zone: ThreatZone)
 	end
 
 	table.clear(zone.activeParts)
-	print(string.format("[ThreatDirector] Zona '%s' replegada por distancia. Recursos liberados.", zone.name))
+	print(string.format("[ThreatDirector] Zona '%s' replegada. Recursos liberados.", zone.name))
 end
 
--- Bucle de Director de Amenazas (1 Hz para máximo rendimiento de servidor)
+-- Bucle de Director de Amenazas (1 Hz): Monitoreo de combate y autorreaparición táctica
 task.spawn(function()
 	while true do
 		task.wait(1.0)
+		local now = os.clock()
 
-		local dronePart = Workspace:FindFirstChild("TestDrone") :: BasePart?
-		if not dronePart then continue end
-
-		local isFlying = (not dronePart.Anchored)
-		local dronePos = dronePart.Position
-		local distToBase = (dronePos - Vector3.new(0, 4, 0)).Magnitude
-
-		-- 1. Si no está volando o está en la Base Central (< 65 studs), Zona Segura Absoluta
-		if not isFlying or distToBase < 65 then
-			for _, zone in pairs(threatZones) do
-				if zone.isActive then
-					deactivateZone(zone)
-				end
-			end
-			continue
-		end
-
-		-- 2. Evaluar cada zona según proximidad del repartidor
 		for _, zone in pairs(threatZones) do
-			local dist = (dronePos - zone.center).Magnitude
-
-			if dist <= zone.activationRadius then
-				if not zone.isActive then
-					activateZone(zone)
-				end
-			elseif dist >= zone.deactivationRadius then
-				if zone.isActive then
-					deactivateZone(zone)
-				end
-			end
-
-			-- 3. Comprobar si todos los enemigos de la zona activa fueron neutralizados en combate
-			if zone.isActive and #zone.activeParts > 0 then
+			if zone.isActive then
+				-- Contar unidades supervivientes en la zona
 				local aliveCount = 0
 				for _, part in ipairs(zone.activeParts) do
 					if part and part.Parent and activeAgents[part] and activeAgents[part].isAlive then
@@ -746,11 +755,17 @@ task.spawn(function()
 					end
 				end
 
-				if aliveCount == 0 then
+				-- Si todas las unidades fueron destruidas por el jugador en combate
+				if aliveCount == 0 and #zone.activeParts > 0 then
 					zone.isActive = false
-					zone.lastClearedTime = os.clock()
+					zone.lastClearedTime = now
 					table.clear(zone.activeParts)
-					print(string.format("[ThreatDirector] ¡SECTOR '%s' DESPEJADO! Cooldown táctico de %ds activado.", zone.name, zone.respawnCooldown))
+					print(string.format("[ThreatDirector] ¡SECTOR '%s' DESPEJADO POR EL PILOTO! Cooldown táctico de %ds antes de refuerzos.", zone.name, zone.respawnCooldown))
+				end
+			else
+				-- Autorreaparición: al expirar el cooldown de sector despejado, desplegar nueva patrulla
+				if (now - zone.lastClearedTime) >= zone.respawnCooldown then
+					activateZone(zone)
 				end
 			end
 		end
@@ -778,6 +793,20 @@ _G.EnemyAIService = {
 		if zone then activateZone(zone) end
 	end,
 }
+
+-- Inicialización diferida garantizada: esperar a CombatService y desplegar patrullas en el mundo
+task.spawn(function()
+	local waitStart = os.clock()
+	while not _G.CombatService and (os.clock() - waitStart < 5) do
+		task.wait(0.1)
+	end
+
+	activateZone(threatZones.Zone_TorreA)
+	activateZone(threatZones.Zone_TorreB)
+
+	local totalEnemies = _G.EnemyAIService.GetActiveCount()
+	print(string.format("[EnemyAIService] ¡MUNDO HOSTIL INICIALIZADO! %d enemigos activos patrullando Torre A y Torre B.", totalEnemies))
+end)
 
 print("[EnemyAIService] Servicio de IA y Director de Amenaza activo a 10 Hz / 1 Hz.")
 
