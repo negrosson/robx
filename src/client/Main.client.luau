@@ -170,30 +170,32 @@ end)
 
 -- Interacción con ProximityPrompt 3D [E] en el mundo
 local ProximityPromptService = game:GetService("ProximityPromptService")
-ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
-	if player == localPlayer and prompt.Name == "PilotPrompt" then
-		if not isCurrentlyPiloting() then
-			enterDrone()
+ProximityPromptService.PromptTriggered:Connect(function(prompt, triggeredPlayer)
+	if prompt.Name == "PilotPrompt" then
+		-- En LocalScripts, triggeredPlayer es nil (o localPlayer según versión de motor)
+		if triggeredPlayer == nil or triggeredPlayer == localPlayer then
+			if not isCurrentlyPiloting() then
+				enterDrone()
+			end
 		end
 	end
 end)
 
 ----------------------------------------------------------------------
 -- GESTIÓN DE ENTRADA POR TECLADO
--- Resuelve la condición de carrera con ProximityPromptService evitando
--- que una pulsación de [E] active y desactive el vuelo en el mismo frame.
+-- Tecla [E] dedicada a entrar (no cancela ni alterna). Tecla [F] para salir.
 ----------------------------------------------------------------------
-UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
-	-- Si el motor ya procesó el input (ej. ProximityPrompt activado, TextBox/Chat, UI), no duplicar acción
-	if gpe then return end
+UserInputService.InputBegan:Connect(function(input: InputObject, _gpe: boolean)
+	-- Solo ignorar si el usuario está tipeando en el chat o en un TextBox con foco
+	local focused = UserInputService:GetFocusedTextBox()
+	if focused then return end
+
 	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
 	if input.KeyCode == Enum.KeyCode.E then
-		-- Tecla E fuera de interacción con ProximityPrompt directo
+		-- Tecla E: Siempre activar entrada a pilotaje si no está volando
 		if not isCurrentlyPiloting() then
 			enterDrone()
-		else
-			exitDrone()
 		end
 	elseif input.KeyCode == Enum.KeyCode.F then
 		-- Tecla F designada explícitamente para salir del modo vuelo FPV
@@ -308,9 +310,11 @@ task.spawn(function()
 	task.spawn(function()
 		local prompt = (droneEntity :: Instance):WaitForChild("PilotPrompt", 5) :: ProximityPrompt?
 		if prompt then
-			prompt.Triggered:Connect(function(player)
-				if player == localPlayer and not isCurrentlyPiloting() then
-					enterDrone()
+			prompt.Triggered:Connect(function(triggeredPlayer)
+				if triggeredPlayer == nil or triggeredPlayer == localPlayer then
+					if not isCurrentlyPiloting() then
+						enterDrone()
+					end
 				end
 			end)
 		end
@@ -378,7 +382,12 @@ task.spawn(function()
 
 	if flightEvent then
 		flightEvent.OnClientEvent:Connect(function(action: any)
-			if action == "StopFlying" or action == "DroneDestroyed" then
+			if action == "EnterDrone" then
+				dbg("Servidor autorizó EnterDrone - iniciando vuelo...")
+				if not isCurrentlyPiloting() then
+					enterDrone()
+				end
+			elseif action == "StopFlying" or action == "DroneDestroyed" then
 				handleServerStopFlight()
 			end
 		end)

@@ -983,6 +983,38 @@ Al acercarse a `TestDrone` e interactuar con la tecla `[E]`, el jugador experime
    * Se conectó `prompt.Triggered` directamente sobre la instancia de `TestDrone` además del despachador global `ProximityPromptService`, garantizando captura inmediata aún con micro-latencias de red.
 
 ---
+
+## 31. Solución Definitiva al Bloqueo de Tecla [E] y Control Autoritativo de Pilotaje
+
+### 🔍 Causa Raíz de la Ausencia Total de Respuesta al Pulsar [E]
+A pesar de la corrección anterior, pulsar `[E]` continuaba sin generar respuesta debido a un **bloqueo triple concurrente**:
+1. **Firma Omitida de `player` en LocalScripts de Roblox (`ProximityPrompt.Triggered`):**
+   En el motor de Roblox, cuando `ProximityPromptService.PromptTriggered` o `ProximityPrompt.Triggered` se ejecuta dentro de un `LocalScript`, el motor **no suministra el argumento `player`** (es `nil`) ya que el script pertenece intrínsecamente al jugador local. La condición previa:
+   ```luau
+   if player == localPlayer and prompt.Name == "PilotPrompt" then
+   ```
+   evaluaba `nil == localPlayer`, resultando **siempre en `false`**. Ninguno de los listeners del cliente activaba `enterDrone()`.
+2. **Bloqueo de Tecla en `UserInputService.InputBegan` por `gpe = true`:**
+   Al estar el jugador cerca del dron con el prompt visible, Roblox marca `gpe = true` para la tecla `[E]`. La comprobación `if gpe then return end` descartaba silenciosamente la pulsación física del teclado.
+3. **Ausencia de Escucha en el Servidor:**
+   El `PilotPrompt` fue creado en el servidor (`Main.server.luau`), pero nunca se le conectó un evento `Triggered` del lado del servidor.
+
+### 🛠️ Arquitectura de Solución Aplicada (Autoritativa y Redundante)
+1. **Listener Autoritativo en el Servidor (`Main.server.luau`):**
+   * Se conectó `pilotPrompt.Triggered:Connect(function(player: Player))` directamente en el servidor.
+   * Al ser activado, el servidor desancla inmediatamente el dron (`dronePart.Anchored = false`), desactiva el prompt, transfiere el `NetworkOwnership` a `player`, registra el dron en `CombatService` y envía `flightStateEvent:FireClient(player, "EnterDrone")`.
+2. **Recepción Canónica en el Cliente (`Main.client.luau`):**
+   * El cliente escucha `action == "EnterDrone"` e invoca `enterDrone()`.
+3. **Corrección de Firma en Clientes:**
+   * En `ProximityPromptService.PromptTriggered` y `prompt.Triggered`, se acepta tanto `triggeredPlayer == nil` como `triggeredPlayer == localPlayer`, asegurando compatibilidad con todas las versiones del motor de Roblox.
+4. **Tecla [E] Dedicada Exclusivamente a Entrada (Idempotente):**
+   * En `UserInputService.InputBegan`, la tecla `[E]` ahora **únicamente llama a `enterDrone()`** si `not isCurrentlyPiloting()`. Nunca llama a `exitDrone()`.
+   * La desconexión del dron se efectúa de manera limpia e inequívoca mediante la tecla `[F]` o el botón en pantalla `[F] DESCONECTAR VISOR FPV`.
+   * Al no conmutar salida en `[E]`, se elimina matemáticamente cualquier posibilidad de cancelación por rebote.
+5. **Garantía Física en `DroneController:StartFlying()`:**
+   * Se fuerza la activación explícita de `linearVelocity.Enabled = true` y `alignOrientation.Enabled = true` y el desanclaje local inmediato.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 

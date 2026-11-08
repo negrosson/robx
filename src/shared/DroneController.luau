@@ -381,6 +381,10 @@ function DroneController:StartFlying()
 	print("[DroneController] StartFlying() llamado")
 	self.isFlying = true
 
+	-- Asegurar que las restricciones físicas de vuelo estén habilitadas
+	if self.linearVelocity then self.linearVelocity.Enabled = true end
+	if self.alignOrientation then self.alignOrientation.Enabled = true end
+
 	-- Inicializar rumbo a la orientación actual del dron
 	local _, initialYaw, _ = self.rootPart.CFrame:ToOrientation()
 	self.flightYaw = initialYaw
@@ -390,10 +394,8 @@ function DroneController:StartFlying()
 	if self.flightStateEvent then
 		print("[DroneController] Disparando StartFlying al servidor...")
 		self.flightStateEvent:FireServer("StartFlying")
-	else
-		warn("[DroneController] Sin RemoteEvent - intentando desanclar localmente (puede fallar con FilteringEnabled)")
-		pcall(function() self.rootPart.Anchored = false end)
 	end
+	pcall(function() self.rootPart.Anchored = false end)
 
 	-- Pequeña espera para que el servidor procese el desanclado
 	task.delay(0.15, function()

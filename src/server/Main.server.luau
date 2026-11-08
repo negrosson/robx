@@ -300,6 +300,20 @@ if not pilotPrompt then
 	pilotPrompt.Parent = dronePart
 end
 
+-- Listener autoritativo en el servidor para el ProximityPrompt
+pilotPrompt.Triggered:Connect(function(player: Player)
+	print(string.format("[Servidor] %s activó el PilotPrompt de TestDrone. Iniciando desanclaje y notificando al cliente...", player.Name))
+	dronePart.Anchored = false
+	pilotPrompt.Enabled = false
+	pcall(function()
+		dronePart:SetNetworkOwner(player)
+	end)
+	if _G.CombatService and _G.CombatService.Register then
+		_G.CombatService.Register(dronePart, 100, 100, 8, 0.0, 0.55, player)
+	end
+	flightStateEvent:FireClient(player, "EnterDrone")
+end)
+
 -- Restricciones físicas en el servidor
 local attachment = dronePart:FindFirstChild("FlightAttachment") :: Attachment?
 if not attachment then
