@@ -1223,6 +1223,33 @@ Se respetó con estricta rigurosidad la configuración previa de teclado para ev
 * `src/server/EnemyAIService.server.luau`: Rutinas de telegrafiado `handleRailDriverCharging` y ensamblaje de `FrontShield`.
 * `src/server/CombatService.server.luau`: Cálculo de ángulo vectorial de impacto (`lookVector:Dot(toSource)`) para deflexión frontal y daño crítico en la espalda.
 
+---
+
+## 38. Expansión del Espacio Aéreo Metropolitano: Reubicación de Torres A y B
+
+### 🎯 Objetivo
+Alejar las torres respecto a la Base Central para proporcionar mayor escala al mundo abierto, rutas de vuelo más desafiantes e inmersivas, y suficiente espacio aéreo para combates cinéticos y uso de turbo nitro.
+
+### 📐 Calibración Espacial
+* **Base Central:** `Vector3.new(0, 4, 0)` (conservada como origen de operaciones).
+* **Torre A (Sector Industrial):**
+  * Posición anterior: `(160, 95, -180)` (~240 studs de distancia).
+  * **Nueva posición:** `Vector3.new(300, 115, -340)` (~453 studs de distancia, altura de 115 studs).
+  * Recompensa de entrega aumentada: **350 ₵** (antes 250 ₵).
+* **Torre B (Sector Black Ops):**
+  * Posición anterior: `(-200, 50, 140)` (~244 studs de distancia).
+  * **Nueva posición:** `Vector3.new(-360, 65, 260)` (~444 studs de distancia, altura de 65 studs).
+  * Recompensa de entrega aumentada: **500 ₵** (antes 400 ₵), ventana de bonus extendida a 120s.
+* **Separación entre Torres A y B:** Ampliada de ~480 studs a **~892 studs** de recorrido metropolitano.
+
+### 🛠️ Ajustes de Sistemas y Radar
+1. **Radar Táctico 360° (`DroneHUD.luau`):** Se incrementó `RADAR_MAX_DIST` de 320 a **500 studs** para abarcar el nuevo perímetro urbano sin cortar los blips holográficos de los helipuertos ni de las patrullas hostiles.
+2. **Director de Amenazas (`EnemyAIService.server.luau`):**
+   * Centros de patrulla `Zone_TorreA` y `Zone_TorreB` anclados a las nuevas coordenadas.
+   * `activationRadius` ampliado a 380 studs y `deactivationRadius` a 900 studs para persistencia fluida de patrullas.
+3. **Gestor Logístico (`DeliveryManager.luau` y `Main.server.luau`):** Coordenadas sincronizadas en servidor y cliente para balizas de entrega, conos de aproximación y rótulos de helipuerto.
+
+
 
 
 

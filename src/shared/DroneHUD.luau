@@ -1276,8 +1276,8 @@ function DroneHUD.Update(
 		self.flareStatusLabel.TextColor3 = Color3.fromRGB(255, 160, 40)
 	end
 
-	-- 9. Radar Táctico de Amenazas 360° (Rango: 320 studs para cobertura total del sector metropolitano)
-	local RADAR_MAX_DIST = 320
+	-- 9. Radar Táctico de Amenazas 360° (Rango: 500 studs para cobertura total del sector metropolitano)
+	local RADAR_MAX_DIST = 500
 	local RADAR_RADIUS_PX = 52
 	local delta = dt or 0.016
 
@@ -1287,8 +1287,8 @@ function DroneHUD.Update(
 		-- Helipuertos conocidos (calibrados con las coordenadas reales del mapa)
 		local helipads = {
 			Base   = Vector3.new(0, 4, 0),
-			TorreA = Vector3.new(160, 95, -180),
-			TorreB = Vector3.new(-200, 50, 140),
+			TorreA = Vector3.new(300, 115, -340),
+			TorreB = Vector3.new(-360, 65, 260),
 		}
 
 		for padName, padPos in pairs(helipads) do

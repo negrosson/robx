@@ -207,10 +207,10 @@ local function createHelipad(name: string, position: Vector3, primaryColor: Colo
 	local threatSubtext = "[ZONA VERDE // REABASTECIMIENTO]"
 	if name == "Pad_TorreA" then
 		signText = "TORRE A"
-		threatSubtext = "[AMENAZA: HOSTIL 🟡 // +250 ₵]"
+		threatSubtext = "[AMENAZA: HOSTIL 🟡 // +350 ₵]"
 	elseif name == "Pad_TorreB" then
 		signText = "TORRE B"
-		threatSubtext = "[AMENAZA: BLACK OPS 🔴 // +400 ₵]"
+		threatSubtext = "[AMENAZA: BLACK OPS 🔴 // +500 ₵]"
 	elseif name == "Pad_Base" then
 		signText = "BASE CENTRAL"
 		threatSubtext = "[ZONA VERDE // REABASTECIMIENTO]"
@@ -255,10 +255,10 @@ local function setupHelipads()
 	local pad1 = createHelipad("Pad_Base", Vector3.new(0, 4, 0), Color3.fromRGB(0, 240, 255), true)
 	pad1.Parent = folder
 
-	local pad2 = createHelipad("Pad_TorreA", Vector3.new(160, 95, -180), Color3.fromRGB(255, 30, 120), false)
+	local pad2 = createHelipad("Pad_TorreA", Vector3.new(300, 115, -340), Color3.fromRGB(255, 30, 120), false)
 	pad2.Parent = folder
 
-	local pad3 = createHelipad("Pad_TorreB", Vector3.new(-200, 50, 140), Color3.fromRGB(255, 200, 0), false)
+	local pad3 = createHelipad("Pad_TorreB", Vector3.new(-360, 65, 260), Color3.fromRGB(255, 200, 0), false)
 	pad3.Parent = folder
 
 	print("[Servidor] Red de Helipuertos (Base, Torre A, Torre B) generados en Workspace.")
@@ -525,10 +525,10 @@ claimDeliveryEvent.OnServerEvent:Connect(function(player: Player, padName: any, 
 			baseReward = 100
 			threatColor = Color3.fromRGB(0, 240, 255)
 		elseif padName == "Pad_TorreB" then
-			baseReward = 400
+			baseReward = 500
 			threatColor = Color3.fromRGB(255, 30, 80)
 		elseif padName == "Pad_TorreA" then
-			baseReward = 250
+			baseReward = 350
 			threatColor = Color3.fromRGB(255, 180, 0)
 		end
 

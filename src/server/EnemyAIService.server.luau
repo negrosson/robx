@@ -1051,18 +1051,18 @@ local threatZones: { [string]: ThreatZone } = {
 		id = "Zone_TorreA",
 		name = "Sector Industrial (Torre A)",
 		threatLevel = "hostile",
-		center = Vector3.new(160, 95, -180),
-		activationRadius = 260,
-		deactivationRadius = 600,
+		center = Vector3.new(300, 115, -340),
+		activationRadius = 380,
+		deactivationRadius = 900,
 		respawnCooldown = 35,
 		lastClearedTime = 0,
 		archetypes = {
 			-- Enjambre Scav-Gnats sobrevolando en patrulla aérea continua sobre Torre A
-			{ specId = "scav_gnats", offset = Vector3.new(-16, 12, 16), difficulty = 0.1 },
-			{ specId = "scav_gnats", offset = Vector3.new(16, 16, -14), difficulty = 0.15 },
-			{ specId = "scav_gnats", offset = Vector3.new(0, 10, 20),   difficulty = 0.2 },
-			-- Explorador adelantado patrullando el corredor aéreo visible desde Base
-			{ specId = "scav_gnats", offset = Vector3.new(-65, -30, 65), difficulty = 0.1 },
+			{ specId = "scav_gnats", offset = Vector3.new(-18, 12, 18), difficulty = 0.1 },
+			{ specId = "scav_gnats", offset = Vector3.new(18, 16, -16), difficulty = 0.15 },
+			{ specId = "scav_gnats", offset = Vector3.new(0, 10, 24),   difficulty = 0.2 },
+			-- Explorador adelantado patrullando el corredor aéreo hacia Base
+			{ specId = "scav_gnats", offset = Vector3.new(-90, -40, 90), difficulty = 0.1 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -1071,15 +1071,15 @@ local threatZones: { [string]: ThreatZone } = {
 		id = "Zone_TorreB",
 		name = "Sector Black Ops (Torre B)",
 		threatLevel = "black_ops",
-		center = Vector3.new(-200, 50, 140),
-		activationRadius = 280,
-		deactivationRadius = 600,
+		center = Vector3.new(-360, 65, 260),
+		activationRadius = 380,
+		deactivationRadius = 900,
 		respawnCooldown = 45,
 		lastClearedTime = 0,
 		archetypes = {
-			-- Torreta Aegis asentada firmemente sobre la cornisa de la azotea de Torre B (Y = 52.5) con telegrafiado láser
+			-- Torreta Aegis asentada firmemente sobre la cornisa de la azotea de Torre B (Y = 67.5) con telegrafiado láser
 			{ specId = "aegis_44",       offset = Vector3.new(14, 2.5, 14), difficulty = 0.25 },
-			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 78)
+			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 95)
 			{ specId = "kuroshio_v",     offset = Vector3.new(-15, 28, 15), difficulty = 0.35 },
 			-- Dron pesado Baluarte con Escudo Frontal Hexagonal de Energía (Aegis-Bulwark)
 			{ specId = "aegis_bulwark",  offset = Vector3.new(22, 16, -22), difficulty = 0.30 },
