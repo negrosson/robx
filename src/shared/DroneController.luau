@@ -716,7 +716,7 @@ function DroneController:StartFlying()
 		if hudAny then
 			if lockedEnemy and cam then
 				local cleanName = lockedEnemy.Name:gsub("_%d+", "")
-				local state: "targeting" | "locked" = if lockedDot >= 0.975 then "locked" else "targeting"
+				local state: "neutral" | "locked" = if lockedDot >= 0.975 then "locked" else "neutral"
 				if hudAny.SetCrosshairState then
 					hudAny:SetCrosshairState(state, cleanName, lockedEnemyDist, self.isAiming)
 				end

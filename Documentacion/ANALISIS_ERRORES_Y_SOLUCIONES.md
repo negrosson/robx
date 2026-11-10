@@ -1087,10 +1087,9 @@ El análisis del analizador sintáctico de Luau (`luau-lsp analyze`) arrojó:
    * Se calcula en tiempo real la velocidad de desplazamiento del objetivo enemigo (`lockedTarget.AssemblyLinearVelocity`) y la velocidad del proyectil de plasma (180 studs/s).
    * Se proyecta la posición futura anticipada mediante `cam:WorldToViewportPoint(leadPoint)`.
    * Si la mira central del jugador se alinea a menos de 25 píxeles del punto de predicción, el aro del HUD se contrae e ilumina en dorado con el rótulo `TARGET ALIGNED`.
-2. **Mira Dinámica con 3 Estados de Color y Hitmarker Táctico:**
-   * **Estado Neutro (Cian Neón):** Retícula abierta relajada para vuelo crucero.
-   * **Estado Rastreo (Amarillo Ámbar):** Detección de dron enemigo en cono de combate (< 300 studs); corchetes se contraen y muestran rótulo `[ ⚡ RASTREO: (OBJETIVO) | 120m ]`.
-   * **Estado Bloqueado (Rojo Carmesí):** Bloqueo cerrado y preciso para lanzamiento de misiles guiados `[ 🎯 LOCK-ON: (OBJETIVO) | 85m ]`.
+2. **Mira Clásica Cyberpunk Neón y Hitmarker Táctico:**
+   * **Mira Clásica Siempre Activa (Cian Neón):** Se eliminó el modo intrusivo de "Rastreo Amarillo" y la etiqueta parpadeante `[ ⚡ RASTREO ]` para preservar la estética limpia y clásica de la cabina.
+   * **Bloqueo Exclusivo de Misiles (`state == "locked"`):** Únicamente cuando un enemigo está perfectamente centrado en la retícula para disparar un misil guiado, se activa el rótulo `[ 🎯 LOCK-ON: (OBJETIVO) | (DIST)m ]` y el punto central en rojo carmesí.
    * **Hitmarker Táctico:** Cruz diagonal (`X`) de 4 aspas blancas que parpadea instantáneamente con sonido metálico al impactar proyectiles. En caso de impacto letal (`isKill`), la cruz es roja de mayor tamaño.
 3. **Zoom y Apuntado de Precisión al Hombro (RMB / MouseButton2):**
    * Al mantener presionado el botón derecho del ratón (RMB):

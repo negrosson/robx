@@ -1387,37 +1387,22 @@ end
 
 function DroneHUD.SetCrosshairState(
 	self: HUDInstance,
-	state: "neutral" | "targeting" | "locked",
+	state: "neutral" | "locked",
 	targetName: string?,
 	distance: number?,
 	isAiming: boolean?
 )
-	local targetColor: Color3
-	local containerSize: number
-	local horizonWidth: number
-	local dotSize: number
+	local isLocked = (state == "locked")
+	local targetColor = if isLocked then COLOR_WARN else COLOR_NEON_CYAN
+	local containerSize = if isAiming then 68 else 80
+	local horizonWidth = if isAiming then 52 else 60
+	local dotSize = if isLocked then 5 else 4
 
-	if state == "locked" then
-		targetColor = COLOR_WARN
-		containerSize = if isAiming then 48 else 58
-		horizonWidth = 40
-		dotSize = 5
+	if isLocked then
 		self.targetLockTag.Visible = true
 		self.targetLockTag.TextColor3 = COLOR_WARN
 		self.targetLockTag.Text = string.format("[ 🎯 LOCK-ON: %s | %.0fm ]", (targetName or "OBJETIVO"):upper(), distance or 0)
-	elseif state == "targeting" then
-		targetColor = COLOR_NEON_YELLOW
-		containerSize = if isAiming then 54 else 68
-		horizonWidth = 50
-		dotSize = 4
-		self.targetLockTag.Visible = true
-		self.targetLockTag.TextColor3 = COLOR_NEON_YELLOW
-		self.targetLockTag.Text = string.format("[ ⚡ RASTREO: %s | %.0fm ]", (targetName or "OBJETIVO"):upper(), distance or 0)
 	else
-		targetColor = COLOR_NEON_CYAN
-		containerSize = if isAiming then 64 else 80
-		horizonWidth = 60
-		dotSize = 4
 		self.targetLockTag.Visible = false
 	end
 
@@ -1434,12 +1419,12 @@ function DroneHUD.SetLeadIndicator(self: HUDInstance, screenPos: Vector2?, isAli
 	if screenPos then
 		self.leadIndicator.Visible = true
 		self.leadIndicator.Position = UDim2.fromOffset(screenPos.X, screenPos.Y)
-		local col = if isAligned then COLOR_NEON_YELLOW else COLOR_NEON_CYAN
+		local col = if isAligned then Color3.fromRGB(0, 255, 200) else COLOR_NEON_CYAN
 		self.leadStroke.Color = col
 		self.leadDot.BackgroundColor3 = col
 		self.leadTag.TextColor3 = col
-		self.leadTag.Text = if isAligned then "TARGET ALIGNED" else "LEAD // MIRA"
-		self.leadIndicator.Size = if isAligned then UDim2.fromOffset(22, 22) else UDim2.fromOffset(26, 26)
+		self.leadTag.Text = if isAligned then "TARGET ALIGNED" else "LEAD"
+		self.leadIndicator.Size = if isAligned then UDim2.fromOffset(20, 20) else UDim2.fromOffset(24, 24)
 	else
 		self.leadIndicator.Visible = false
 	end
