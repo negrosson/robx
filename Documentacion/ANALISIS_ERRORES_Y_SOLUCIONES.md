@@ -1079,6 +1079,32 @@ El análisis del analizador sintáctico de Luau (`luau-lsp analyze`) arrojó:
    Se separó la verificación de existencia de la instancia `ModuleScript` en `ReplicatedStorage` de la ejecución de `require()`, reportando dinámicamente cualquier error exacto devuelto por Luau.
 
 ---
+
+## 34. Implementación Integral del Pilar 1: Apuntado en Tercera Persona, Retícula Predictiva y Feedback Sensorial ("Game Feel")
+
+### 🎯 Objetivos Implementados
+1. **Retícula Predictiva de Tiro (*Lead Indicator*):**
+   * Se calcula en tiempo real la velocidad de desplazamiento del objetivo enemigo (`lockedTarget.AssemblyLinearVelocity`) y la velocidad del proyectil de plasma (180 studs/s).
+   * Se proyecta la posición futura anticipada mediante `cam:WorldToViewportPoint(leadPoint)`.
+   * Si la mira central del jugador se alinea a menos de 25 píxeles del punto de predicción, el aro del HUD se contrae e ilumina en dorado con el rótulo `TARGET ALIGNED`.
+2. **Mira Dinámica con 3 Estados de Color y Hitmarker Táctico:**
+   * **Estado Neutro (Cian Neón):** Retícula abierta relajada para vuelo crucero.
+   * **Estado Rastreo (Amarillo Ámbar):** Detección de dron enemigo en cono de combate (< 300 studs); corchetes se contraen y muestran rótulo `[ ⚡ RASTREO: (OBJETIVO) | 120m ]`.
+   * **Estado Bloqueado (Rojo Carmesí):** Bloqueo cerrado y preciso para lanzamiento de misiles guiados `[ 🎯 LOCK-ON: (OBJETIVO) | 85m ]`.
+   * **Hitmarker Táctico:** Cruz diagonal (`X`) de 4 aspas blancas que parpadea instantáneamente con sonido metálico al impactar proyectiles. En caso de impacto letal (`isKill`), la cruz es roja de mayor tamaño.
+3. **Zoom y Apuntado de Precisión al Hombro (RMB / MouseButton2):**
+   * Al mantener presionado el botón derecho del ratón (RMB):
+     * La cámara realiza un zoom suave reduciendo el FOV (de 70 a 48 en 3ra persona y a 42 en FPV).
+     * La sensibilidad del ratón se amortigua un 45% para permitir microajustes de puntería finos a larga distancia.
+     * Al soltar RMB, el FOV y la sensibilidad se restauran de inmediato.
+4. **Retroceso Visual, Fogonazo y Sacudida de Pantalla (*Screen Shake*):**
+   * Sistema de trauma cuadrático en `DroneController`:
+     * Disparo de plasma: acumula trauma (+0.16), retroceso físico en el chasis (-1.5 studs/s) y fogonazo dinámico local `PointLight` en la tobera.
+     * Lanzamiento de misil guiado: trauma pesado (+0.48) y retroceso de -5.0 studs/s.
+     * Daño recibido: trauma intenso (+0.65).
+     * El trauma decae de manera fluida y aplica microdesplazamientos con ruido Perlin (`math.noise`) a la cámara.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 

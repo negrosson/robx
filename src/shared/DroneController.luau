@@ -281,6 +281,11 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		lockedTarget        = nil :: BasePart?,
 		onDestroyedCallback = nil :: (() -> ())?,
 
+		-- Game Feel y Apuntado de Precisión (Pilar 1)
+		isAiming            = false,
+		shakeTrauma         = 0,
+		targetHitConn       = nil :: RBXScriptConnection?,
+
 		-- estado
 		isFPV      = false,
 		isFlying   = false,
@@ -311,6 +316,18 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 
 	-- Callback de entrega y logística
 	self:SetupDeliveryCallback()
+
+	-- Conectar escucha de confirmación de impacto de proyectil/misil (Hitmarker)
+	local onTargetHitEv = self:GetRemoteEvent("OnTargetHit")
+	if onTargetHitEv then
+		self.targetHitConn = onTargetHitEv.OnClientEvent:Connect(function(hitData: any)
+			local hudAny: any = self.hud
+			if hudAny and hudAny.TriggerHitmarker then
+				local isKill = if typeof(hitData) == "table" and hitData.isKill then true else false
+				hudAny:TriggerHitmarker(isKill)
+			end
+		end)
+	end
 
 	print("[DroneController v5] Listo!")
 	return self
@@ -627,9 +644,10 @@ function DroneController:StartFlying()
 
 				cam.CFrame = CFrame.new(eyePos) * camRot
 
-				-- FOV dinámico en FPV para dar sensación de velocidad inmersiva
-				local targetFOV = 85 + (100 - 85) * speedRatio
-				cam.FieldOfView = cam.FieldOfView + (targetFOV - cam.FieldOfView) * math.clamp(dt * 6, 0, 1)
+				-- FOV dinámico en FPV (con zoom táctico si RMB presionado)
+				local targetFOV = if self.isAiming then 42 else (85 + (100 - 85) * speedRatio)
+				local fovSpeed = if self.isAiming then 10 else 6
+				cam.FieldOfView = cam.FieldOfView + (targetFOV - cam.FieldOfView) * math.clamp(dt * fovSpeed, 0, 1)
 			else
 				if cam.CameraType ~= Enum.CameraType.Custom then
 					cam.CameraType = Enum.CameraType.Custom
@@ -637,14 +655,28 @@ function DroneController:StartFlying()
 				if cam.CameraSubject ~= self.rootPart then
 					cam.CameraSubject = self.rootPart
 				end
-				local targetFOV = self.config.baseFOV + (self.config.maxFOV - self.config.baseFOV) * speedRatio
-				cam.FieldOfView = cam.FieldOfView + (targetFOV - cam.FieldOfView) * math.clamp(dt * 5, 0, 1)
+				-- FOV dinámico en 3ra persona (con zoom de precisión al hombro si RMB presionado)
+				local targetFOV = if self.isAiming then 48 else (self.config.baseFOV + (self.config.maxFOV - self.config.baseFOV) * speedRatio)
+				local fovSpeed = if self.isAiming then 9 else 5
+				cam.FieldOfView = cam.FieldOfView + (targetFOV - cam.FieldOfView) * math.clamp(dt * fovSpeed, 0, 1)
+			end
+
+			-- Sacudida cinemática de pantalla (Screen Shake) por disparos, misiles y daño
+			self.shakeTrauma = math.max(0, (self.shakeTrauma or 0) - dt * 2.8)
+			if (self.shakeTrauma or 0) > 0.005 then
+				local shakeIntensity = (self.shakeTrauma or 0)^2
+				local nowClock = os.clock()
+				local pitchShake = (math.noise(nowClock * 32, 0, 0) - 0.5) * 0.024 * shakeIntensity
+				local yawShake   = (math.noise(0, nowClock * 32, 0) - 0.5) * 0.024 * shakeIntensity
+				local rollShake  = (math.noise(0, 0, nowClock * 32) - 0.5) * 0.020 * shakeIntensity
+				cam.CFrame = cam.CFrame * CFrame.Angles(pitchShake, yawShake, rollShake)
 			end
 		end
 
-		-- Target Lock Detection (Detección cónica para mira central en 3ra Persona y FPV)
+		-- Target Lock Detection & Lead Indicator (Detección cónica para mira central en 3ra Persona y FPV)
 		local lockedEnemy: BasePart? = nil
 		local lockedEnemyDist = 320
+		local lockedDot = 0
 		local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
 
 		if cam and enemyFolder then
@@ -658,8 +690,8 @@ function DroneController:StartFlying()
 					local dist = toEnemy.Magnitude
 					if dist <= lockedEnemyDist and dist > 1.0 then
 						local dot = aimDir:Dot(toEnemy.Unit)
-						-- Cono de ~16 grados de tolerancia respecto al centro de la retícula
-						if dot >= 0.96 then
+						-- Cono de ~18 grados de tolerancia respecto al centro de la retícula
+						if dot >= 0.94 then
 							-- Comprobar línea de visión física (no fijar enemigos detrás de torres o edificios)
 							local losParams = RaycastParams.new()
 							losParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -671,6 +703,7 @@ function DroneController:StartFlying()
 							if not losHit or losHit.Instance == enemy or losHit.Instance:IsDescendantOf(enemy) then
 								lockedEnemyDist = dist
 								lockedEnemy = enemy
+								lockedDot = dot
 							end
 						end
 					end
@@ -680,12 +713,40 @@ function DroneController:StartFlying()
 
 		self.lockedTarget = lockedEnemy
 		local hudAny: any = self.hud
-		if hudAny and hudAny.SetTargetLock then
-			if lockedEnemy then
+		if hudAny then
+			if lockedEnemy and cam then
 				local cleanName = lockedEnemy.Name:gsub("_%d+", "")
-				hudAny:SetTargetLock(cleanName, lockedEnemyDist)
+				local state: "targeting" | "locked" = if lockedDot >= 0.975 then "locked" else "targeting"
+				if hudAny.SetCrosshairState then
+					hudAny:SetCrosshairState(state, cleanName, lockedEnemyDist, self.isAiming)
+				end
+
+				-- Cálculo de Lead Indicator (Punto predictivo anticipado en tiempo real)
+				local enemyVel = if lockedEnemy:IsA("BasePart") then (lockedEnemy :: BasePart).AssemblyLinearVelocity else Vector3.zero
+				local plasmaSpeed = 180 -- studs/s
+				local flightTime = lockedEnemyDist / plasmaSpeed
+				local leadWorldPos = lockedEnemy.Position + enemyVel * flightTime
+				local screenPos, inView = cam:WorldToViewportPoint(leadWorldPos)
+
+				if inView and screenPos.Z > 0 then
+					local screenVec = Vector2.new(screenPos.X, screenPos.Y)
+					local centerVec = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+					local isAligned = (screenVec - centerVec).Magnitude < 25
+					if hudAny.SetLeadIndicator then
+						hudAny:SetLeadIndicator(screenVec, isAligned)
+					end
+				else
+					if hudAny.SetLeadIndicator then
+						hudAny:SetLeadIndicator(nil, false)
+					end
+				end
 			else
-				hudAny:SetTargetLock(nil)
+				if hudAny.SetCrosshairState then
+					hudAny:SetCrosshairState("neutral", nil, nil, self.isAiming)
+				end
+				if hudAny.SetLeadIndicator then
+					hudAny:SetLeadIndicator(nil, false)
+				end
 			end
 		end
 
@@ -907,6 +968,14 @@ function DroneController:BindInputs()
 			return
 		end
 
+		-- Zoom y apuntado de precisión táctico con MouseButton2 (RMB)
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then
+			if self.isFlying then
+				self.isAiming = true
+			end
+			return
+		end
+
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 		local k = input.KeyCode
 
@@ -997,6 +1066,11 @@ function DroneController:BindInputs()
 	end)
 
 	self.inputEndedConn = UserInputService.InputEnded:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then
+			self.isAiming = false
+			return
+		end
+
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 		local k = input.KeyCode
 
@@ -1020,7 +1094,8 @@ function DroneController:BindInputs()
 
 		if input.UserInputType == Enum.UserInputType.MouseMovement then
 			local delta = input.Delta
-			local sens = self.config.mouseSensitivity or 0.003
+			local baseSens = self.config.mouseSensitivity or 0.003
+			local sens = if self.isAiming then baseSens * 0.55 else baseSens
 			self.flightYaw = self.flightYaw - delta.X * sens
 			self.fpvPitch  = math.clamp(self.fpvPitch - delta.Y * sens, math.rad(-60), math.rad(60))
 		end
@@ -1028,6 +1103,7 @@ function DroneController:BindInputs()
 end
 
 function DroneController:UnbindInputs()
+	self.isAiming = false
 	if self.inputBeganConn then self.inputBeganConn:Disconnect(); self.inputBeganConn = nil end
 	if self.inputEndedConn then self.inputEndedConn:Disconnect(); self.inputEndedConn = nil end
 	if self.mouseMoveConn  then self.mouseMoveConn:Disconnect();  self.mouseMoveConn  = nil end
@@ -1066,6 +1142,9 @@ function DroneController:ApplyDamage(finalDamage: any, attackerPos: Vector3?)
 
 	self.currentHealth = math.max(0, (self.currentHealth or self.maxHealth) - dmg)
 	local hpPct = self.currentHealth / (self.maxHealth or 100)
+
+	-- Sacudida de pantalla intensa por impacto enemigo
+	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.65)
 
 	if self.hud then
 		pcall(function()
@@ -1180,6 +1259,34 @@ function DroneController:FireWeapon()
 
 	-- Simulación de proyectil local inmediata para feedback visual sin lag de red
 	self:SpawnLocalPlasmaBolt(originPos, targetPos)
+
+	-- Fogonazo de luz dinámica en el cañón
+	local flash = self.rootPart:FindFirstChild("MuzzleFlashLight") :: PointLight?
+	if not flash then
+		flash = Instance.new("PointLight")
+		flash.Name = "MuzzleFlashLight"
+		flash.Color = Color3.fromRGB(0, 255, 230)
+		flash.Range = 14
+		flash.Brightness = 3.5
+		flash.Parent = self.rootPart
+	end
+	flash.Enabled = true
+	task.delay(0.05, function()
+		if flash and flash.Parent then flash.Enabled = false end
+	end)
+
+	-- Retroceso visual y micro-impulso físico táctil
+	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.16)
+	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 1.5
+
+	-- Predicción local de impacto (Hitmarker instantáneo para sensación arcade)
+	local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+	if targetPart and enemyFolder and (targetPart == enemyFolder or targetPart:IsDescendantOf(enemyFolder)) then
+		local hudAny: any = self.hud
+		if hudAny and hudAny.TriggerHitmarker then
+			hudAny:TriggerHitmarker(false)
+		end
+	end
 
 	-- Generar calor en el chasis
 	self.currentHeat = math.min(self.maxHeat or 100, (self.currentHeat or 0) + 4)
@@ -1423,6 +1530,10 @@ function DroneController:FireMissile()
 	-- Simulación de proyectil local inmediata con feedback visual y curva Bézier
 	self:SpawnLocalMissile(originPos, targetPart)
 
+	-- Retroceso visual y micro-impulso físico táctil al lanzar misil pesado
+	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.48)
+	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 5.0
+
 	-- Sonido de lanzamiento de cohete pesado
 	local launchSound = Instance.new("Sound")
 	launchSound.SoundId = "rbxassetid://9114223400"
@@ -1639,6 +1750,10 @@ end
 ----------------------------------------------------------------------
 function DroneController:Destroy()
 	self:StopFlying()
+	if self.targetHitConn then
+		self.targetHitConn:Disconnect()
+		self.targetHitConn = nil
+	end
 	if self.hud and self.hud.Destroy then
 		pcall(function() self.hud:Destroy() end)
 		self.hud = nil

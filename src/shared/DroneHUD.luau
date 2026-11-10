@@ -53,6 +53,15 @@ export type HUDInstance = {
 	targetLockTag: TextLabel,
 	centerDot: Frame,
 	missileStatusLabel: TextLabel,
+	leftBracket: TextLabel,
+	rightBracket: TextLabel,
+	hitmarkerFrame: Frame,
+	hitmarkerTicks: { Frame },
+	hitSound: Sound,
+	leadIndicator: Frame,
+	leadStroke: UIStroke,
+	leadDot: Frame,
+	leadTag: TextLabel,
 }
 
 local COLOR_BG = Color3.fromRGB(8, 14, 24)
@@ -139,7 +148,7 @@ function DroneHUD.new(): HUDInstance
 	horizonLine.BorderSizePixel = 0
 	horizonLine.Parent = crosshairContainer
 
-	local function createBracket(posX: number, text: string)
+	local function createBracket(posX: number, text: string): TextLabel
 		local label = Instance.new("TextLabel")
 		label.Size = UDim2.fromOffset(16, 30)
 		label.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -150,9 +159,92 @@ function DroneHUD.new(): HUDInstance
 		label.TextColor3 = COLOR_NEON_CYAN
 		label.TextSize = 22
 		label.Parent = crosshairContainer
+		return label
 	end
-	createBracket(0.1, "[")
-	createBracket(0.9, "]")
+	local leftBracket = createBracket(0.1, "[")
+	local rightBracket = createBracket(0.9, "]")
+
+	-- Hitmarker táctico dinámico (4 aspas diagonales + sonido de confirmación)
+	local hitmarkerFrame = Instance.new("Frame")
+	hitmarkerFrame.Name = "HitmarkerFrame"
+	hitmarkerFrame.Size = UDim2.fromOffset(36, 36)
+	hitmarkerFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	hitmarkerFrame.Position = UDim2.fromScale(0.5, 0.5)
+	hitmarkerFrame.BackgroundTransparency = 1
+	hitmarkerFrame.Visible = false
+	hitmarkerFrame.Parent = crosshairContainer
+
+	local hitmarkerTicks: { Frame } = {}
+	local tickOffsets = {
+		{ -7, -7,  45 },
+		{  7, -7, -45 },
+		{ -7,  7, -45 },
+		{  7,  7,  45 },
+	}
+	for _, cfg in ipairs(tickOffsets) do
+		local tick = Instance.new("Frame")
+		tick.Name = "HitTick"
+		tick.Size = UDim2.fromOffset(2, 8)
+		tick.AnchorPoint = Vector2.new(0.5, 0.5)
+		tick.Position = UDim2.new(0.5, cfg[1], 0.5, cfg[2])
+		tick.Rotation = cfg[3]
+		tick.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		tick.BorderSizePixel = 0
+		tick.Parent = hitmarkerFrame
+		table.insert(hitmarkerTicks, tick)
+	end
+
+	local hitSound = Instance.new("Sound")
+	hitSound.Name = "HitSound"
+	hitSound.SoundId = "rbxassetid://9114223170"
+	hitSound.Volume = 0.8
+	hitSound.PlaybackSpeed = 1.8
+	hitSound.Parent = crosshairContainer
+
+	-- Retícula predictiva adelantada (Lead Indicator) en espacio de pantalla
+	local leadIndicator = Instance.new("Frame")
+	leadIndicator.Name = "LeadIndicator"
+	leadIndicator.Size = UDim2.fromOffset(26, 26)
+	leadIndicator.AnchorPoint = Vector2.new(0.5, 0.5)
+	leadIndicator.Position = UDim2.fromScale(0.5, 0.5)
+	leadIndicator.BackgroundTransparency = 1
+	leadIndicator.Visible = false
+	leadIndicator.Parent = mainContainer
+
+	local leadStroke = Instance.new("UIStroke")
+	leadStroke.Name = "LeadStroke"
+	leadStroke.Thickness = 1.5
+	leadStroke.Color = COLOR_NEON_CYAN
+	leadStroke.Parent = leadIndicator
+
+	local leadCorner = Instance.new("UICorner")
+	leadCorner.CornerRadius = UDim.new(1, 0)
+	leadCorner.Parent = leadIndicator
+
+	local leadDot = Instance.new("Frame")
+	leadDot.Name = "LeadDot"
+	leadDot.Size = UDim2.fromOffset(4, 4)
+	leadDot.AnchorPoint = Vector2.new(0.5, 0.5)
+	leadDot.Position = UDim2.fromScale(0.5, 0.5)
+	leadDot.BackgroundColor3 = COLOR_NEON_CYAN
+	leadDot.BorderSizePixel = 0
+	leadDot.Parent = leadIndicator
+
+	local leadDotCorner = Instance.new("UICorner")
+	leadDotCorner.CornerRadius = UDim.new(1, 0)
+	leadDotCorner.Parent = leadDot
+
+	local leadTag = Instance.new("TextLabel")
+	leadTag.Name = "LeadTag"
+	leadTag.Size = UDim2.fromOffset(90, 14)
+	leadTag.AnchorPoint = Vector2.new(0.5, 0)
+	leadTag.Position = UDim2.new(0.5, 0, 1, 2)
+	leadTag.BackgroundTransparency = 1
+	leadTag.Font = Enum.Font.Code
+	leadTag.Text = "LEAD // MIRA"
+	leadTag.TextColor3 = COLOR_NEON_CYAN
+	leadTag.TextSize = 10
+	leadTag.Parent = leadIndicator
 
 	-- Rótulo de Fijado de Objetivo (Lock-On para Combate en 3ra Persona y Misiles)
 	local targetLockTag = Instance.new("TextLabel")
@@ -924,6 +1016,15 @@ function DroneHUD.new(): HUDInstance
 		targetLockTag = targetLockTag,
 		centerDot = centerDot,
 		missileStatusLabel = missileStatusLabel,
+		leftBracket = leftBracket,
+		rightBracket = rightBracket,
+		hitmarkerFrame = hitmarkerFrame,
+		hitmarkerTicks = hitmarkerTicks,
+		hitSound = hitSound,
+		leadIndicator = leadIndicator,
+		leadStroke = leadStroke,
+		leadDot = leadDot,
+		leadTag = leadTag,
 	}
 
 	return setmetatable(self, DroneHUD) :: any
@@ -1284,16 +1385,99 @@ function DroneHUD.SetHeatDisplay(self: HUDInstance, pct: number)
 	self.heatLabel.Text = string.format("CALOR NÚCLEO: %d%%", math.round(heat * 100))
 end
 
+function DroneHUD.SetCrosshairState(
+	self: HUDInstance,
+	state: "neutral" | "targeting" | "locked",
+	targetName: string?,
+	distance: number?,
+	isAiming: boolean?
+)
+	local targetColor: Color3
+	local containerSize: number
+	local horizonWidth: number
+	local dotSize: number
+
+	if state == "locked" then
+		targetColor = COLOR_WARN
+		containerSize = if isAiming then 48 else 58
+		horizonWidth = 40
+		dotSize = 5
+		self.targetLockTag.Visible = true
+		self.targetLockTag.TextColor3 = COLOR_WARN
+		self.targetLockTag.Text = string.format("[ 🎯 LOCK-ON: %s | %.0fm ]", (targetName or "OBJETIVO"):upper(), distance or 0)
+	elseif state == "targeting" then
+		targetColor = COLOR_NEON_YELLOW
+		containerSize = if isAiming then 54 else 68
+		horizonWidth = 50
+		dotSize = 4
+		self.targetLockTag.Visible = true
+		self.targetLockTag.TextColor3 = COLOR_NEON_YELLOW
+		self.targetLockTag.Text = string.format("[ ⚡ RASTREO: %s | %.0fm ]", (targetName or "OBJETIVO"):upper(), distance or 0)
+	else
+		targetColor = COLOR_NEON_CYAN
+		containerSize = if isAiming then 64 else 80
+		horizonWidth = 60
+		dotSize = 4
+		self.targetLockTag.Visible = false
+	end
+
+	self.centerDot.BackgroundColor3 = targetColor
+	self.centerDot.Size = UDim2.fromOffset(dotSize, dotSize)
+	self.horizonLine.BackgroundColor3 = targetColor
+	self.horizonLine.Size = UDim2.fromOffset(horizonWidth, 2)
+	self.crosshair.Size = UDim2.fromOffset(containerSize, containerSize)
+	if self.leftBracket then self.leftBracket.TextColor3 = targetColor end
+	if self.rightBracket then self.rightBracket.TextColor3 = targetColor end
+end
+
+function DroneHUD.SetLeadIndicator(self: HUDInstance, screenPos: Vector2?, isAligned: boolean?)
+	if screenPos then
+		self.leadIndicator.Visible = true
+		self.leadIndicator.Position = UDim2.fromOffset(screenPos.X, screenPos.Y)
+		local col = if isAligned then COLOR_NEON_YELLOW else COLOR_NEON_CYAN
+		self.leadStroke.Color = col
+		self.leadDot.BackgroundColor3 = col
+		self.leadTag.TextColor3 = col
+		self.leadTag.Text = if isAligned then "TARGET ALIGNED" else "LEAD // MIRA"
+		self.leadIndicator.Size = if isAligned then UDim2.fromOffset(22, 22) else UDim2.fromOffset(26, 26)
+	else
+		self.leadIndicator.Visible = false
+	end
+end
+
+function DroneHUD.TriggerHitmarker(self: HUDInstance, isKill: boolean)
+	local col = if isKill then Color3.fromRGB(255, 45, 45) else Color3.fromRGB(255, 255, 255)
+	local tickSize = if isKill then UDim2.fromOffset(3, 11) else UDim2.fromOffset(2, 8)
+
+	for _, tick in ipairs(self.hitmarkerTicks) do
+		tick.BackgroundColor3 = col
+		tick.Size = tickSize
+		tick.BackgroundTransparency = 0
+	end
+	self.hitmarkerFrame.Visible = true
+
+	if self.hitSound then
+		self.hitSound.PlaybackSpeed = if isKill then 1.3 else 1.9
+		self.hitSound.Volume = if isKill then 1.0 else 0.75
+		self.hitSound:Play()
+	end
+
+	task.spawn(function()
+		task.wait(0.06)
+		local twInfo = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		for _, tick in ipairs(self.hitmarkerTicks) do
+			TweenService:Create(tick, twInfo, { BackgroundTransparency = 1 }):Play()
+		end
+		task.wait(0.12)
+		self.hitmarkerFrame.Visible = false
+	end)
+end
+
 function DroneHUD.SetTargetLock(self: HUDInstance, targetName: string?, distance: number?)
 	if targetName then
-		self.targetLockTag.Visible = true
-		self.targetLockTag.Text = string.format("[ 🎯 FIJADO: %s | %.0fm ]", targetName:upper(), distance or 0)
-		self.centerDot.BackgroundColor3 = Color3.fromRGB(255, 35, 60)
-		self.horizonLine.BackgroundColor3 = Color3.fromRGB(255, 35, 60)
+		self:SetCrosshairState("locked", targetName, distance, false)
 	else
-		self.targetLockTag.Visible = false
-		self.centerDot.BackgroundColor3 = COLOR_NEON_CYAN
-		self.horizonLine.BackgroundColor3 = COLOR_NEON_CYAN
+		self:SetCrosshairState("neutral", nil, nil, false)
 	end
 end
 

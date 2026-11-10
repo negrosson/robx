@@ -68,6 +68,8 @@ local onEMPEvent            = ensureRemote(NetworkEvents.Names.OnEMPActivated)
 local onHeatUpdateEvent     = ensureRemote(NetworkEvents.Names.OnHeatUpdate)
 -- Servidor → Cliente: Recompensa de caza
 local onBountyEvent         = ensureRemote(NetworkEvents.Names.OnBountyAwarded)
+-- Servidor → Cliente: Confirmación de impacto para Hitmarker táctico
+local onTargetHitEvent      = ensureRemote(NetworkEvents.Names.OnTargetHit)
 local flightStateEvent      = ensureRemote(NetworkEvents.Names.DroneFlightState)
 local droneDestroyedEvent   = ensureRemote(NetworkEvents.Names.DroneDestroyed)
 
@@ -331,6 +333,15 @@ local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any
 			weapon           = weaponSpec and weaponSpec.name or "Hostil",
 			healthPct        = state.health / state.maxHealth,
 			attackerPosition = pos,
+		})
+	end
+
+	-- Notificar al jugador atacante con confirmación de impacto (Hitmarker con sonido y VFX)
+	if attackerPlayer and state.owner ~= attackerPlayer then
+		onTargetHitEvent:FireClient(attackerPlayer, {
+			damage = finalDmg,
+			isKill = (state.health <= 0),
+			hitPos = sourcePos or (state.rootPart and state.rootPart.Position),
 		})
 	end
 

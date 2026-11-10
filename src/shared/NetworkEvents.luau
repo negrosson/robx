@@ -18,6 +18,7 @@ NetworkEvents.Names = {
 	OnEMPActivated        = "OnEMPActivated",
 	OnHeatUpdate          = "OnHeatUpdate",
 	OnBountyAwarded       = "OnBountyAwarded",
+	OnTargetHit           = "OnTargetHit",
 	BuyMissiles           = "BuyMissiles",
 	BuyMissilesConfirmed  = "BuyMissilesConfirmed",
 }
