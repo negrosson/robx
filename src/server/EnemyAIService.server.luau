@@ -40,6 +40,26 @@ local ENEMY_FOLDER        = "EnemyDrones"
 ----------------------------------------------------------------------
 -- TIPOS
 ----------------------------------------------------------------------
+export type SquadRole = "leader" | "flanker_left" | "flanker_right" | "reserve"
+
+type SquadMember = {
+	agent: EnemyAgent,
+	role: SquadRole,
+	assignedSide: number,
+	strikeDelay: number,
+	lastStrikeTime: number,
+}
+
+type ThreatSquad = {
+	id: string,
+	leaderPart: BasePart?,
+	members: { [BasePart]: SquadMember },
+	phase: "approach" | "flank_spread" | "converging_strike" | "disarray",
+	phaseTimer: number,
+	targetPlayer: Player?,
+	targetPart: BasePart?,
+}
+
 type EnemyAgent = {
 	spec           : any,          -- EnemyTypes.EnemySpec
 	part           : BasePart,
@@ -58,9 +78,12 @@ type EnemyAgent = {
 	chargeStartTime: number?,
 	chargeDuration : number?,
 	telegraphLaser : BasePart?,
+	squadId        : string?,
+	squadRole      : SquadRole?,
 }
 
 local activeAgents: { [BasePart]: EnemyAgent } = {}
+local activeSquads: { [string]: ThreatSquad } = {}
 local agentFolder: Folder
 
 ----------------------------------------------------------------------
@@ -232,17 +255,19 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 		shieldLight.Parent = shield
 	end
 
-	-- Rótulo holográfico diegético de hostilidad visible hasta 600 studs
+	-- Rótulo holográfico diegético de hostilidad con barra de vida segmentada (pips/rayitas)
 	local tagGui = Instance.new("BillboardGui")
 	tagGui.Name        = "EnemyTag"
-	tagGui.Size        = UDim2.fromOffset(180, 26)
-	tagGui.StudsOffset = Vector3.new(0, part.Size.Y + 1.8, 0)
+	tagGui.Size        = UDim2.fromOffset(200, 34)
+	tagGui.StudsOffset = Vector3.new(0, part.Size.Y + 2.0, 0)
 	tagGui.AlwaysOnTop = true
 	tagGui.MaxDistance = 600
 	tagGui.Parent      = part
 
 	local tagText = Instance.new("TextLabel")
-	tagText.Size                   = UDim2.fromScale(1, 1)
+	tagText.Name                   = "NameLabel"
+	tagText.Size                   = UDim2.new(1, 0, 0, 16)
+	tagText.Position               = UDim2.new(0, 0, 0, 0)
 	tagText.BackgroundTransparency = 1
 	tagText.Font                   = Enum.Font.Code
 	tagText.Text                   = string.format("▼ [%s] ▼", spec.name:upper())
@@ -250,6 +275,79 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 	tagText.TextSize               = 11
 	tagText.TextStrokeTransparency = 0.2
 	tagText.Parent                 = tagGui
+
+	-- Contenedor de "rayitas de vida" segmentadas según la dureza del dron
+	local pipsCount = math.clamp(math.round(spec.maxHealth / 20), 3, 14)
+	local pipsBar = Instance.new("Frame")
+	pipsBar.Name = "HealthPipsBar"
+	pipsBar.Size = UDim2.new(1, -24, 0, 7)
+	pipsBar.Position = UDim2.new(0, 12, 0, 18)
+	pipsBar.BackgroundColor3 = Color3.fromRGB(15, 18, 24)
+	pipsBar.BackgroundTransparency = 0.35
+	pipsBar.BorderSizePixel = 0
+	pipsBar.Parent = tagGui
+
+	local pipsBarCorner = Instance.new("UICorner")
+	pipsBarCorner.CornerRadius = UDim.new(0, 2)
+	pipsBarCorner.Parent = pipsBar
+
+	local pipsList = Instance.new("UIListLayout")
+	pipsList.FillDirection = Enum.FillDirection.Horizontal
+	pipsList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	pipsList.VerticalAlignment = Enum.VerticalAlignment.Center
+	pipsList.Padding = UDim.new(0, 2)
+	pipsList.Parent = pipsBar
+
+	local pipWidth = (1.0 / pipsCount)
+	local pips: { Frame } = {}
+	for i = 1, pipsCount do
+		local pip = Instance.new("Frame")
+		pip.Name = "Pip_" .. tostring(i)
+		pip.Size = UDim2.new(pipWidth, -2, 1, -2)
+		pip.BackgroundColor3 = spec.accentColor
+		pip.BorderSizePixel = 0
+		pip.Parent = pipsBar
+
+		local pipCorner = Instance.new("UICorner")
+		pipCorner.CornerRadius = UDim.new(0, 1)
+		pipCorner.Parent = pip
+
+		table.insert(pips, pip)
+	end
+
+	-- Conectar actualización en vivo de rayitas de vida al recibir daño
+	part:GetAttributeChangedSignal("Health"):Connect(function()
+		local hp = (part:GetAttribute("Health") :: number?) or spec.maxHealth
+		local maxHp = (part:GetAttribute("MaxHealth") :: number?) or spec.maxHealth
+		local pct = math.clamp(hp / maxHp, 0, 1)
+		local activePips = math.ceil(pct * pipsCount)
+
+		for i, pip in ipairs(pips) do
+			if i <= activePips then
+				if pct > 0.5 then
+					pip.BackgroundColor3 = spec.accentColor
+				elseif pct > 0.25 then
+					pip.BackgroundColor3 = Color3.fromRGB(255, 200, 30)
+				else
+					pip.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
+				end
+				pip.BackgroundTransparency = 0
+			else
+				pip.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+				pip.BackgroundTransparency = 0.75
+			end
+		end
+
+		-- Destello de impacto sutil en la barra
+		pcall(function()
+			pipsBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			task.delay(0.08, function()
+				if pipsBar and pipsBar.Parent then
+					pipsBar.BackgroundColor3 = Color3.fromRGB(15, 18, 24)
+				end
+			end)
+		end)
+	end)
 
 	return part
 end
@@ -342,6 +440,80 @@ local function findNearestPlayerTarget(agentPos: Vector3): (Player?, BasePart?)
 	end
 
 	return bestPlayer, bestPart
+end
+
+----------------------------------------------------------------------
+-- GESTIÓN DE ESCUADRONES EN PINZA (SQUAD PINCER ARCHITECTURE)
+----------------------------------------------------------------------
+local function createSquad(squadId: string, leaderAgent: EnemyAgent, flankerAgents: { EnemyAgent }): ThreatSquad
+	local squad: ThreatSquad = {
+		id = squadId,
+		leaderPart = leaderAgent.part,
+		members = {},
+		phase = "approach",
+		phaseTimer = 0,
+		targetPlayer = nil,
+		targetPart = nil,
+	}
+
+	-- 1. Asignar rol de Líder
+	leaderAgent.squadId = squadId
+	leaderAgent.squadRole = "leader"
+	squad.members[leaderAgent.part] = {
+		agent = leaderAgent,
+		role = "leader",
+		assignedSide = 0,
+		strikeDelay = 0,
+		lastStrikeTime = 0,
+	}
+
+	local tagGui = leaderAgent.part:FindFirstChild("EnemyTag")
+	local nameLabel = tagGui and tagGui:FindFirstChild("NameLabel") :: TextLabel?
+	if nameLabel then
+		nameLabel.Text = string.format("👑 [%s // LÍDER] 👑", leaderAgent.spec.name:upper())
+		nameLabel.TextColor3 = Color3.fromRGB(255, 215, 60)
+	end
+
+	-- 2. Asignar roles de Flanqueadores (Izquierda y Derecha)
+	local sides = { -1, 1, -1, 1 }
+	for idx, flanker in ipairs(flankerAgents) do
+		local side = sides[idx] or -1
+		local role: SquadRole = if side == -1 then "flanker_left" else "flanker_right"
+		flanker.squadId = squadId
+		flanker.squadRole = role
+
+		squad.members[flanker.part] = {
+			agent = flanker,
+			role = role,
+			assignedSide = side,
+			strikeDelay = if side == 1 then 0.45 else 0, -- Ataque escalonado en tijera
+			lastStrikeTime = 0,
+		}
+
+		local fTag = flanker.part:FindFirstChild("EnemyTag")
+		local fLabel = fTag and fTag:FindFirstChild("NameLabel") :: TextLabel?
+		if fLabel then
+			local arrow = if side == -1 then "◄ [FLANCO IZQ]" else "[FLANCO DER] ►"
+			fLabel.Text = string.format("%s %s", arrow, flanker.spec.name:upper())
+		end
+	end
+
+	activeSquads[squadId] = squad
+	print(string.format("[SquadAI] Escuadrón '%s' formado: Líder (%s) + %d flanqueadores.", squadId, leaderAgent.spec.name, #flankerAgents))
+	return squad
+end
+
+local function dissolveSquad(squadId: string)
+	local squad = activeSquads[squadId]
+	if not squad then return end
+	for _, member in pairs(squad.members) do
+		if member.agent then
+			member.agent.squadId = nil
+			member.agent.squadRole = nil
+		end
+	end
+	activeSquads[squadId] = nil
+	print(string.format("[SquadAI] Escuadrón '%s' disuelto.", squadId))
 end
 
 ----------------------------------------------------------------------
@@ -798,6 +970,71 @@ RunService.Heartbeat:Connect(function(dt: number)
 	if aiAccumulator < AI_TICK_RATE then return end
 	aiAccumulator = 0
 
+	-- ---- ACTUALIZACIÓN COORDINADA DE ESCUADRONES (SQUAD COORDINATOR 10 Hz) ----
+	for squadId, squad in pairs(activeSquads) do
+		local leaderAlive = false
+		if squad.leaderPart and squad.leaderPart.Parent then
+			local lAgent = activeAgents[squad.leaderPart]
+			if lAgent and lAgent.isAlive then
+				leaderAlive = true
+				-- Propagar objetivo prioritario del líder a todo el escuadrón
+				squad.targetPlayer = lAgent.targetPlayer
+				squad.targetPart = lAgent.targetPart
+			end
+		end
+
+		if not leaderAlive and squad.phase ~= "disarray" then
+			-- PÁNICO TÁCTICO / DESBANDADA POR MUERTE DEL LÍDER
+			squad.phase = "disarray"
+			squad.phaseTimer = 3.5
+			print(string.format("[SquadAI] ¡LÍDER ELIMINADO en '%s'! Escuadrón roto en desbandada táctica.", squadId))
+
+			-- Alerta HUD diegética al jugador: formación enemiga rota
+			if incomingThreatAlertEvent then
+				for _, p in ipairs(Players:GetPlayers()) do
+					pcall(function()
+						incomingThreatAlertEvent:FireClient(p, {
+							threatType = "cleared",
+							reason = "¡FORMACIÓN QUEBRADA // LÍDER ELIMINADO!",
+						})
+					end)
+				end
+			end
+
+			-- Billboard de miembros supervivientes pasa a pánico desordenado
+			for part, member in pairs(squad.members) do
+				if part and part.Parent and part ~= squad.leaderPart then
+					local tagGui = part:FindFirstChild("EnemyTag")
+					local nameLabel = tagGui and tagGui:FindFirstChild("NameLabel") :: TextLabel?
+					if nameLabel then
+						nameLabel.Text = "⚠️ [EN DESBANDADA] ⚠️"
+						nameLabel.TextColor3 = Color3.fromRGB(255, 120, 20)
+					end
+				end
+			end
+		end
+
+		if squad.phase == "disarray" then
+			squad.phaseTimer -= AI_TICK_RATE
+			if squad.phaseTimer <= 0 then
+				dissolveSquad(squadId)
+			end
+		else
+			-- Ciclo de fases de la pinza táctica (Pincer State Machine)
+			squad.phaseTimer += AI_TICK_RATE
+			if squad.phase == "approach" and squad.phaseTimer >= 2.0 then
+				squad.phase = "flank_spread"
+				squad.phaseTimer = 0
+			elseif squad.phase == "flank_spread" and squad.phaseTimer >= 3.0 then
+				squad.phase = "converging_strike"
+				squad.phaseTimer = 0
+			elseif squad.phase == "converging_strike" and squad.phaseTimer >= 2.8 then
+				squad.phase = "approach"
+				squad.phaseTimer = 0
+			end
+		end
+	end
+
 	-- Recolectar vecinos para flocking de gnats
 	local gnatParts: { BasePart } = {}
 	for part, agent in pairs(activeAgents) do
@@ -866,11 +1103,85 @@ RunService.Heartbeat:Connect(function(dt: number)
 			agent.targetPart   = nil
 		end
 
-		-- ---- CALCULAR STEERING POR MODO ----
+		local squad = if agent.squadId then activeSquads[agent.squadId] else nil
+		local member = if squad then squad.members[part] else nil
+
+		-- Si el agente no tiene objetivo propio pero el escuadrón sí, sincronizarlo
+		if not agent.targetPart and squad and squad.targetPart then
+			agent.targetPart = squad.targetPart
+			agent.targetPlayer = squad.targetPlayer
+		end
+
+		-- ---- CALCULAR STEERING POR MODO / COORDINACIÓN DE ESCUADRÓN ----
 		local steerForce = Vector3.zero
 		local mode = agent.spec.aggressionMode
 
-		if mode == "ramming" then
+		if squad and squad.phase == "disarray" and mode ~= "turret" then
+			-- PÁNICO Y DESBANDADA POR BAJA DEL LÍDER: MANIOBRAS ERRÁTICAS EVASIVAS
+			local threatPos = if agent.targetPart then agent.targetPart.Position else (agent.homeCenter or part.Position)
+			local fleeDir = (part.Position - threatPos)
+			local fleeUnit = if fleeDir.Magnitude > 0.1 then fleeDir.Unit else Vector3.yAxis
+			local jitter = Vector3.new(
+				math.sin(os.clock() * 14 + part.Position.X * 0.1),
+				math.sin(os.clock() * 10),
+				math.cos(os.clock() * 14 + part.Position.Z * 0.1)
+			) * 24
+			steerForce = (fleeUnit * agent.spec.maxSpeed * 1.2) + jitter
+
+		elseif squad and member and (member.role == "flanker_left" or member.role == "flanker_right") and agent.targetPart and mode ~= "turret" then
+			-- COMPORTAMIENTO TÁCTICO DE PINZA PARA FLANQUEADORES (SQUAD PINCER)
+			local targetCF = agent.targetPart.CFrame
+			local targetVel = agent.targetPart.AssemblyLinearVelocity
+			local side = member.assignedSide
+
+			if squad.phase == "approach" or squad.phase == "flank_spread" then
+				-- Fases 1 y 2: Despliegue envolvente lateral en coordenadas relativas a la nave del jugador
+				local sideOffset = targetCF.RightVector * (side * 62)
+				local rearOffset = -targetCF.LookVector * 18
+				local vertOffset = Vector3.new(0, 8, 0)
+				local leadPrediction = targetVel * 0.35
+				local flankPos = targetCF.Position + sideOffset + rearOffset + vertOffset + leadPrediction
+
+				local sepV = separation(part.Position, gnatParts, 12) * SEPARATION_WEIGHT
+				steerForce = arrive(part.Position, flankPos, agent.spec.maxSpeed, 24) + sepV
+
+				local thrusterAtt = part:FindFirstChild("ThrusterAtt")
+				local thruster = if thrusterAtt then thrusterAtt:FindFirstChild("ThrusterTrail") :: ParticleEmitter? else nil
+				if thruster then
+					thruster.Rate = 40
+					thruster.Speed = NumberRange.new(8, 16)
+				end
+
+			elseif squad.phase == "converging_strike" then
+				-- Fase 3: Ataque convergente en tijera (Scissor Dive) escalonado
+				if squad.phaseTimer >= member.strikeDelay then
+					-- Picado afilado con predicción de trayectoria cortando la vía de escape
+					local diveLead = agent.targetPart.Position + (targetVel * 0.30)
+					local strikeSpeed = math.max(agent.spec.maxSpeed, 74)
+					local seekV = seek(part.Position, diveLead, strikeSpeed)
+					local sepV = separation(part.Position, gnatParts, 8) * (SEPARATION_WEIGHT * 0.4)
+					steerForce = seekV + sepV
+
+					local thrusterAtt = part:FindFirstChild("ThrusterAtt")
+					local thruster = if thrusterAtt then thrusterAtt:FindFirstChild("ThrusterTrail") :: ParticleEmitter? else nil
+					if thruster then
+						thruster.Rate = 90
+						thruster.Speed = NumberRange.new(18, 30)
+					end
+
+					if mode == "ramming" then
+						handleRamming(agent)
+					elseif mode == "orbit" then
+						handleFiring(agent)
+					end
+				else
+					-- Retardo escalonado de tijera: aguardar en ángulo lateral antes de picar
+					local holdOffset = (targetCF.RightVector * (side * 52)) + Vector3.new(0, 10, 0)
+					steerForce = arrive(part.Position, targetCF.Position + holdOffset, agent.spec.maxSpeed, 18)
+				end
+			end
+
+		elseif mode == "ramming" then
 			if agent.targetPart then
 				local distToPlayer = (part.Position - agent.targetPart.Position).Magnitude
 				local diveSpeed = if distToPlayer <= 70 then 68 else agent.spec.maxSpeed
@@ -996,9 +1307,11 @@ RunService.Heartbeat:Connect(function(dt: number)
 			-- Integrar steering hacia velocidad actual con inercia
 			agent.velocity = agent.velocity:Lerp(steerForce, math.clamp(AI_TICK_RATE * 3, 0, 1))
 
-			-- Limitar a velocidad máxima (con soporte de picado dinámico para Scav-Gnats)
+			-- Limitar a velocidad máxima (con soporte de picado dinámico para Scav-Gnats y Tijera)
 			local effectiveMaxSpeed = agent.spec.maxSpeed
-			if mode == "ramming" and agent.targetPart then
+			if squad and squad.phase == "converging_strike" and member and squad.phaseTimer >= member.strikeDelay then
+				effectiveMaxSpeed = 74
+			elseif mode == "ramming" and agent.targetPart then
 				local distToPlayer = (part.Position - agent.targetPart.Position).Magnitude
 				if distToPlayer <= 70 then
 					effectiveMaxSpeed = 68
@@ -1057,12 +1370,13 @@ local threatZones: { [string]: ThreatZone } = {
 		respawnCooldown = 35,
 		lastClearedTime = 0,
 		archetypes = {
-			-- Enjambre Scav-Gnats sobrevolando en patrulla aérea continua sobre Torre A
-			{ specId = "scav_gnats", offset = Vector3.new(-18, 12, 18), difficulty = 0.1 },
-			{ specId = "scav_gnats", offset = Vector3.new(18, 16, -16), difficulty = 0.15 },
-			{ specId = "scav_gnats", offset = Vector3.new(0, 10, 24),   difficulty = 0.2 },
-			-- Explorador adelantado patrullando el corredor aéreo hacia Base
-			{ specId = "scav_gnats", offset = Vector3.new(-90, -40, 90), difficulty = 0.1 },
+			-- Líder de escuadrón Scav-Gnat alfa con mayor dureza y agresividad (más rayitas de vida)
+			{ specId = "scav_gnats", offset = Vector3.new(0, 14, 0),    difficulty = 0.50 },
+			-- Flanqueadores laterales en pinza
+			{ specId = "scav_gnats", offset = Vector3.new(-22, 10, 18), difficulty = 0.15 },
+			{ specId = "scav_gnats", offset = Vector3.new(22, 12, -18), difficulty = 0.15 },
+			-- Explorador de reserva / flanqueo secundario
+			{ specId = "scav_gnats", offset = Vector3.new(-45, -15, 45), difficulty = 0.10 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -1081,7 +1395,7 @@ local threatZones: { [string]: ThreatZone } = {
 			{ specId = "aegis_44",       offset = Vector3.new(14, 2.5, 14), difficulty = 0.25 },
 			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 95)
 			{ specId = "kuroshio_v",     offset = Vector3.new(-15, 28, 15), difficulty = 0.35 },
-			-- Dron pesado Baluarte con Escudo Frontal Hexagonal de Energía (Aegis-Bulwark)
+			-- Dron pesado Baluarte con Escudo Frontal Hexagonal de Energía (Aegis-Bulwark, Líder de Escuadrón)
 			{ specId = "aegis_bulwark",  offset = Vector3.new(22, 16, -22), difficulty = 0.30 },
 		},
 		activeParts = {},
@@ -1099,12 +1413,38 @@ local function activateZone(zone: ThreatZone)
 	zone.isActive = true
 	table.clear(zone.activeParts)
 
+	local spawnedAgents: { EnemyAgent } = {}
 	for _, arch in ipairs(zone.archetypes) do
 		local spawnPos = zone.center + arch.offset
 		local part = EnemyAIService_Spawn(arch.specId, spawnPos, arch.difficulty, zone.id)
 		if part then
 			table.insert(zone.activeParts, part)
+			local ag = activeAgents[part]
+			if ag then
+				table.insert(spawnedAgents, ag)
+			end
 		end
+	end
+
+	-- FORMAR ESCUADRÓN TÁCTICO EN PINZA SI HAY UNIDADES MÓVILES
+	local mobileAgents: { EnemyAgent } = {}
+	for _, ag in ipairs(spawnedAgents) do
+		if ag.spec.aggressionMode ~= "turret" then
+			table.insert(mobileAgents, ag)
+		end
+	end
+
+	if #mobileAgents >= 2 then
+		-- Priorizar como líder al más resistente (mayor maxHealth)
+		table.sort(mobileAgents, function(a, b)
+			return a.spec.maxHealth > b.spec.maxHealth
+		end)
+		local leader = mobileAgents[1]
+		local flankers: { EnemyAgent } = {}
+		for i = 2, #mobileAgents do
+			table.insert(flankers, mobileAgents[i])
+		end
+		createSquad("Squad_" .. zone.id, leader, flankers)
 	end
 
 	print(string.format("[ThreatDirector] ¡Zona '%s' ACTIVADA! %d unidades hostiles patrullando.", zone.name, #zone.activeParts))
@@ -1113,6 +1453,8 @@ end
 local function deactivateZone(zone: ThreatZone)
 	if not zone.isActive then return end
 	zone.isActive = false
+
+	dissolveSquad("Squad_" .. zone.id)
 
 	for _, part in ipairs(zone.activeParts) do
 		if part and part.Parent then

@@ -115,6 +115,10 @@ function CombatService_Register(
 		bounty         = bounty,
 		lastAttacker   = nil,
 	}
+
+	part:SetAttribute("Health", maxHealth)
+	part:SetAttribute("MaxHealth", maxHealth)
+	part:SetAttribute("HealthPct", 1.0)
 	print(string.format("[CombatService] Dron registrado: %s (HP:%d / Heat:%d / Bounty:%s)", part.Name, maxHealth, maxHeat, tostring(bounty or 0)))
 end
 
@@ -374,6 +378,12 @@ local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any
 
 	local finalDmg = math.max(1, effectiveRawDamage * (1 - mitigation))
 	state.health = math.max(0, state.health - finalDmg)
+
+	if state.part and state.part.Parent then
+		state.part:SetAttribute("Health", state.health)
+		state.part:SetAttribute("MaxHealth", state.maxHealth)
+		state.part:SetAttribute("HealthPct", state.health / state.maxHealth)
+	end
 
 	-- Notificar al dueño del dron con posición del atacante para HUD direccional
 	if state.owner then

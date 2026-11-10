@@ -1255,3 +1255,44 @@ Alejar las torres respecto a la Base Central para proporcionar mayor escala al m
 
 
 
+## 39. Barras de Vida Segmentadas ("Pips") y Formación de Escuadrón en Pinza (Squad Flanking & Scissor Strike)
+
+### 🎯 Objetivos Implementados
+1. **Barras de Vida Segmentadas por Rayitas ("Pips"):** Visualización diegética en el rótulo holográfico sobre cada dron enemigo con número de segmentos proporcional a la dureza del objetivo (`pips = clamp(round(maxHealth / 20), 3, 14)`).
+2. **Coordinación de Escuadrón en Pinza (Squad Pincer AI):** Transición de IA aislada a arquitectura de escuadrón coordinado por un Líder táctico con flanqueadores laterales en espacio coordenado relativo al jugador (`targetCF`).
+3. **Ataque Convergente en Tijera (Scissor Dive):** Picado escalonado en dos tiempos (Flanco Izquierdo a t=0s, Flanco Derecho a t=0.45s) para cortar de raíz las maniobras de esquiva del piloto.
+4. **Desbandada Táctica por Muerte del Líder (Morale Break):** Si el líder es derribado, el escuadrón entra en pánico durante 3.5s, las etiquetas cambian a `[⚠️ EN DESBANDADA] ⚠️`, adoptan maniobras evasivas erráticas y el HUD del jugador recibe la confirmación `[ ✓ FORMACIÓN QUEBRADA // LÍDER ELIMINADO ]`.
+
+### 🔍 Arquitectura de Vida Segmentada (`CombatService` & `EnemyAIService`)
+* **Sincronización de Atributos:** `CombatService.server.luau` escribe los atributos `Health`, `MaxHealth` y `HealthPct` en el `BasePart` de cada entidad registrada al momento del impacto (`applyDamage`).
+* **Renderizado de Rayitas:** Cada dron cuenta con un `BillboardGui` (`EnemyTag`, 200x34 studs) que contiene:
+  * Rótulo superior con el nombre del arquetipo y su rol táctico (`👑 [LÍDER] 👑`, `◄ [FLANCO IZQ]`, `[FLANCO DER] ►`).
+  * Contenedor horizontal (`HealthPipsBar`) con distribución `UIListLayout` y bordes redondeados.
+  * Número dinámico de pips:
+    * **Scav-Gnat básico (60 HP):** 3 rayitas.
+    * **Scav-Gnat líder (85-95 HP):** 4-5 rayitas.
+    * **Kuroshio-V (120 HP):** 6 rayitas.
+    * **Aegis-44 (200 HP):** 10 rayitas.
+    * **Aegis-Bulwark (240 HP):** 12 rayitas.
+* **Respuesta Cromática y Destello:** Al recibir impactos, las rayitas consumidas pasan a gris oscuro transparente (`transparency = 0.75`). Las rayitas restantes cambian de color según el porcentaje de salud restante:
+  * `> 50% HP`: Color de facción original (cian/naranja/rojo).
+  * `25% - 50% HP`: Ámbar preventivo (`RGB 255, 200, 30`).
+  * `< 25% HP`: Rojo crítico (`RGB 255, 45, 45`).
+  * Destello de impacto: Fondo de la barra destella en blanco puro durante 0.08s para feedback táctil instantáneo.
+
+### 📐 Máquina de Estados del Escuadrón (3 Fases)
+* **Fase 1: `approach` (2.0s):**
+  * El Líder avanza frontalmente manteniendo fijada la atención del jugador.
+  * Los flanqueadores abren ángulo en el espacio local del jugador: `targetCF.RightVector * (side * 62)` y `targetCF.LookVector * -18` con predicción de velocidad (`targetVel * 0.35`).
+* **Fase 2: `flank_spread` (3.0s):**
+  * Los drones laterales se posicionan en los puntos ciegos laterales y ligeramente elevados (`+8 studs Y`), cerrando la tenaza mientras la estela de propulsión sube a 40 part/s.
+* **Fase 3: `converging_strike` (2.8s) — Ataque en Tijera:**
+  * **Flanco Izquierdo (side = -1):** Pica de inmediato (`delay = 0s`) con morro alineado a la trayectoria predictiva del jugador (`diveLead = pos + vel * 0.30`) a **74 studs/s**.
+  * **Flanco Derecho (side = 1):** Mantiene la amenaza durante 0.45s y luego corta la ruta de escape hacia la que el jugador normalmente evade al esquivar el primer dron.
+  * Al completar los 2.8s, el escuadrón retorna a la fase de aproximación para reagruparse.
+
+### ⚡ Pánico y Disolución de Escuadrón (`disarray`)
+* Al caer el líder, `Heartbeat` detecta la baja en menos de 100 ms.
+* El estado del escuadrón cambia a `disarray` (3.5 segundos).
+* Los flanqueadores pierden la fijación coordinada, ejecutan vectores de evasión `flee` con fluctuación senoidal (`jitter * 24 studs`) y sus rótulos se tiñen de naranja `⚠️ [EN DESBANDADA] ⚠️`.
+* Se dispara el evento de red `IncomingThreatAlert` con tipo `cleared`, mostrando el aviso verde de victoria táctica en la interfaz de cabina del jugador.
