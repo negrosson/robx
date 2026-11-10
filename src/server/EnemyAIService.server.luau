@@ -607,6 +607,24 @@ RunService.Heartbeat:Connect(function(dt: number)
 			continue
 		end
 
+		-- Si está aturdido por EMP, deshabilitar motores y aplicar caída física con giro
+		if part:FindFirstChild("EMPHighlight") then
+			agent.velocity = Vector3.new(agent.velocity.X * 0.85, -45, agent.velocity.Z * 0.85)
+			part.AssemblyLinearVelocity = agent.velocity
+			part.CFrame = part.CFrame * CFrame.Angles(math.rad(AI_TICK_RATE * 90), math.rad(AI_TICK_RATE * 60), 0)
+			continue
+		end
+
+		-- Si fue desorientado por bengalas térmicas, romper objetivo y evadir
+		if part:FindFirstChild("FlaresConfused") then
+			agent.targetPlayer = nil
+			agent.targetPart   = nil
+			local steerForce   = (part.CFrame.LookVector + Vector3.new(0, 0.3, 0)).Unit * agent.spec.maxSpeed
+			agent.velocity     = agent.velocity:Lerp(steerForce, math.clamp(AI_TICK_RATE * 2, 0, 1))
+			part.AssemblyLinearVelocity = agent.velocity
+			continue
+		end
+
 		-- Detectar jugador más cercano en rango (fuera del perímetro seguro de Base)
 		local targetPlayer, targetPart = findNearestPlayerTarget(part.Position)
 		local inRange = false

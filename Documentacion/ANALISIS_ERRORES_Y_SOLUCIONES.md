@@ -1103,6 +1103,46 @@ El análisis del analizador sintáctico de Luau (`luau-lsp analyze`) arrojó:
      * El trauma decae de manera fluida y aplica microdesplazamientos con ruido Perlin (`math.noise`) a la cámara.
 
 ---
+
+## 35. Implementación Integral del Pilar 2: Tácticas de Combate, Disparo Cargado, Purga Térmica, Bengalas y Física de Caída EMP
+
+### 🎯 Objetivos y Mapeo de Controles (Auditoría de Teclas)
+Se respetó con estricta rigurosidad la configuración previa de teclado para evitar conflictos:
+* **[C] Conservado Intacto:** Exclusivo para el pulso electromagnético (`TriggerEMP`). No fue modificado ni reasignado.
+* **[LMB] Sostenido (≥ 0.65s):** Disparo Cargado (*Magma-Orb Sobrecargado*). El clic rápido (*tap* < 0.65s) mantiene la cadencia de ráfaga rápida clásica (*Magma-Spike*).
+* **[Z] Purga de Calor Activa:** Asignado a tecla `[Z]` (adyacente a X y C). Libera presión criogénica y resetea el calor a 0%.
+* **[T] Bengalas Térmicas / Chaff:** Asignado a tecla `[T]` (adyacente a R y G). Lanza 4 contramedidas pirotécnicas para romper fijación de amenazas.
+
+### 🛠️ Mecánicas Implementadas
+
+1. **Disparo Cargado (*Magma-Orb Sobrecargado*):**
+   * **Carga en Tiempo Real:** Al mantener pulsado el botón izquierdo del ratón (LMB), se genera un orbe de plasma en el morro del dron que escala su tamaño y transmuta de amarillo intenso a naranja ígneo al alcanzar la carga completa (0.65s).
+   * **Balística y Área de Detonación:** Al soltar LMB, dispara un proyectil pesado de 2.4 studs a 150 studs/s. Al impactar genera una esfera de detonación de 18 studs de radio que inflige 50 de daño directo, daño de salpicadura decreciente y un empuje cinético de +40 studs/s a drones hostiles adyacentes.
+   * **Costo de Energía:** Genera +28 unidades de calor y aplica un fuerte retroceso físico (-3.8 studs/s) y trauma de cámara (+0.38).
+
+2. **Purga Térmica Criogénica Activa [Z]:**
+   * **Función Táctica:** Resetea el calor acumulado instantáneamente a 0% y elimina el estado de sobrecalentamiento (*Overheat*). Requiere al menos un 15% de calor o bloqueo de armas para activarse.
+   * **Efectos Audiovisuales:** Expulsa dos chorros laterales de vapor criogénico neón azul cian con sonido de despresurización de alta presión.
+   * **Balance:** Cooldown de 8.0 segundos gestionado con telemetría en tiempo real.
+
+3. **Bengalas Térmicas y Contramedidas Chaff [T]:**
+   * **Despliegue Pirotécnico:** Eyección propulsada de 4 bengalas luminosas que caen con estela y luces de alta intensidad (`PointLight` de 24 studs de rango).
+   * **Neutralización de Amenazas:** Desorienta a la IA enemiga en un radio de 85 studs durante 3.5s mediante la etiqueta `FlaresConfused`, forzando a los drones agresores a perder el blanco y realizar maniobras evasivas.
+   * **Balance:** Cooldown de 10.0 segundos con advertencia y notificación en pantalla.
+
+4. **Pulso EMP con Física de Apagado de Motores y Caída Libre [C]:**
+   * **Desactivación de Propulsión:** Al disparar el pulso electromagnético en `[C]`, los motores de los drones en un radio de 90 studs se apagan totalmente (`LinearVelocity.Enabled = false`, `AlignOrientation.Enabled = false`).
+   * **Caída Física Realista:** Se aplica una velocidad de desplome hacia abajo (`AssemblyLinearVelocity.Y = -45 studs/s`) y una velocidad angular caótica, haciendo que los drones enemigos giren descontrolados y se estrellen o caigan al vacío durante los 3.5 segundos de parálisis electromagnética.
+
+5. **Actualización de Telemetría Táctica (HUD):**
+   * El panel inferior izquierdo (`CombatStatusBox`) se redimensionó para presentar el estado y contador de recarga en vivo de las 4 habilidades tácticas:
+     * `PULSO EMP [C]: ¡LISTO! ⚡` / `RECARGA (%ds)`
+     * `MISILES [R]: [ ■ ■ ■ ] (3/3)`
+     * `PURGA [Z]: ¡LISTO! ❄` / `RECARGA (%ds)`
+     * `BENGALAS [T]: ¡LISTO! 🔥` / `RECARGA (%ds)`
+   * La barra superior de comandos ahora incluye la referencia completa de teclas de combate.
+
+---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
 

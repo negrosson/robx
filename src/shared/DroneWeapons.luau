@@ -55,7 +55,7 @@ local COL_PLASMA   = Color3.fromRGB(255, 100, 0)    -- naranja magma
 local COL_GAUSS    = Color3.fromRGB(180, 220, 255)  -- azul frío electromagnético
 local COL_MISSILE  = Color3.fromRGB(255, 230, 0)    -- amarillo guiado
 local COL_MICRO    = Color3.fromRGB(180, 0,   255)  -- violeta microondas
-local COL_NEON_RED = Color3.fromRGB(255, 0,   63)
+local _COL_NEON_RED = Color3.fromRGB(255, 0,   63)
 
 ----------------------------------------------------------------------
 -- 1. TÉRMICA / FUEGO — "Magma-Spike"
@@ -93,6 +93,43 @@ local MAGMA_SPIKE: WeaponSpec = {
 	beamColor       = COL_PLASMA,
 	projectileColor = COL_PLASMA,
 	description     = "Plasma de magnesio acelerado magnéticamente. Funde los actuadores de sustentación. Cadencia media. Detonación térmica sobre superficies orgánicas y metálicas.",
+}
+
+----------------------------------------------------------------------
+-- 1B. DISPARO CARGADO — "Magma-Orb Sobrecargado" (LMB sostenido)
+----------------------------------------------------------------------
+local CHARGED_PLASMA_BLAST: WeaponSpec = {
+	id              = "charged_plasma_blast",
+	name            = "Magma-Orb Sobrecargado",
+	family          = "Thermal / Plasma",
+	damageType      = "thermal",
+	caliber         = "heavy",
+	minTier         = 1,
+
+	damage          = 50,    -- alto daño de impacto y área
+	fireRate        = 0.6,   -- requiere cargar
+	projectileSpeed = 150,   -- velocidad de orbe denso
+	range           = 240,
+	heatGenerated   = 28,    -- calor generado en el portador
+	heatOnTarget    = 32,    -- sobrecalienta al enemigo
+
+	effects = {
+		{
+			type     = "dot",
+			value    = 10,     -- daño térmico residual
+			duration = 3.0,
+		},
+		{
+			type     = "lift_reduction",
+			value    = 0.60,   -- 60% menos sustentación
+			duration = 3.0,
+		},
+	},
+
+	beamWidth       = 0,
+	beamColor       = COL_PLASMA,
+	projectileColor = COL_PLASMA,
+	description     = "Orbe hiperconcentrado de plasma ionizado. Detona en área empujando chasis y fundiendo circuitos.",
 }
 
 ----------------------------------------------------------------------
@@ -204,6 +241,7 @@ local SYNAPSE_OVERHEAT: WeaponSpec = {
 ----------------------------------------------------------------------
 local allWeapons: { WeaponSpec } = {
 	MAGMA_SPIKE,
+	CHARGED_PLASMA_BLAST,
 	RAIL_DRIVER,
 	SMART_GYRO_LOCK,
 	SYNAPSE_OVERHEAT,

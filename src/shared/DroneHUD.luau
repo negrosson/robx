@@ -40,6 +40,8 @@ export type HUDInstance = {
 	heatLabel: TextLabel,
 	heatFill: Frame,
 	empStatusLabel: TextLabel,
+	ventStatusLabel: TextLabel,
+	flareStatusLabel: TextLabel,
 	damageOverlay: Frame,
 	damageIndicatorArrow: Frame,
 	radarFrame: Frame,
@@ -317,9 +319,9 @@ function DroneHUD.new(): HUDInstance
 	----------------------------------------------------------------------
 	local combatBox = Instance.new("Frame")
 	combatBox.Name = "CombatStatusBox"
-	combatBox.Size = UDim2.fromOffset(210, 108)
+	combatBox.Size = UDim2.fromOffset(210, 142)
 	combatBox.AnchorPoint = Vector2.new(0, 1)
-	combatBox.Position = UDim2.new(0, 35, 1, -148)
+	combatBox.Position = UDim2.new(0, 35, 1, -125)
 	combatBox.BackgroundColor3 = COLOR_BG
 	combatBox.BackgroundTransparency = 0.35
 	combatBox.BorderSizePixel = 0
@@ -426,6 +428,32 @@ function DroneHUD.new(): HUDInstance
 	missileStatusLabel.TextSize = 10
 	missileStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 	missileStatusLabel.Parent = combatBox
+
+	-- Módulo de Purga de Calor Criogénica [Z]
+	local ventStatusLabel = Instance.new("TextLabel")
+	ventStatusLabel.Name = "VentStatusLabel"
+	ventStatusLabel.Size = UDim2.new(1, -20, 0, 14)
+	ventStatusLabel.Position = UDim2.fromOffset(10, 102)
+	ventStatusLabel.BackgroundTransparency = 1
+	ventStatusLabel.Font = Enum.Font.RobotoMono
+	ventStatusLabel.Text = "PURGA [Z]: LISTO ❄"
+	ventStatusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
+	ventStatusLabel.TextSize = 10
+	ventStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	ventStatusLabel.Parent = combatBox
+
+	-- Módulo de Bengalas / Chaff [T]
+	local flareStatusLabel = Instance.new("TextLabel")
+	flareStatusLabel.Name = "FlareStatusLabel"
+	flareStatusLabel.Size = UDim2.new(1, -20, 0, 14)
+	flareStatusLabel.Position = UDim2.fromOffset(10, 119)
+	flareStatusLabel.BackgroundTransparency = 1
+	flareStatusLabel.Font = Enum.Font.RobotoMono
+	flareStatusLabel.Text = "BENGALAS [T]: LISTO 🔥"
+	flareStatusLabel.TextColor3 = Color3.fromRGB(255, 160, 40)
+	flareStatusLabel.TextSize = 10
+	flareStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	flareStatusLabel.Parent = combatBox
 
 	----------------------------------------------------------------------
 	-- 2C. RADAR TÁCTICO DE AMENAZAS 360° (SUPERIOR IZQUIERDA)
@@ -681,7 +709,7 @@ function DroneHUD.new(): HUDInstance
 	camLabel.Size = UDim2.new(1, 0, 1, 0)
 	camLabel.BackgroundTransparency = 1
 	camLabel.Font = Enum.Font.RobotoMono
-	camLabel.Text = "CAM: 3RA PERSONA // [LMB] PLASMA // [C] EMP // [V] FPV // [X] FRENO"
+	camLabel.Text = "CAM: 3RA PERSONA // [LMB] ARMA // [Z] PURGA // [T] BENGALAS // [C] EMP // [R] MISIL // [X] FRENO"
 	camLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
 	camLabel.TextSize = 10
 	camLabel.Parent = topBanner
@@ -954,6 +982,8 @@ function DroneHUD.new(): HUDInstance
 		heatLabel = heatLabel,
 		heatFill = heatFill,
 		empStatusLabel = empStatusLabel,
+		ventStatusLabel = ventStatusLabel,
+		flareStatusLabel = flareStatusLabel,
 		damageOverlay = damageOverlay,
 		damageIndicatorArrow = damageIndicatorArrow,
 		radarFrame = radarFrame,
@@ -1005,7 +1035,9 @@ function DroneHUD.Update(
 	dt: number?,
 	rushActive: boolean?,
 	rushRemaining: number?,
-	pilotRank: string?
+	pilotRank: string?,
+	ventCooldownRemaining: number?,
+	flareCooldownRemaining: number?
 )
 	-- 1. Velocímetro e impulso
 	local roundedSpeed = math.round(speed)
@@ -1040,10 +1072,10 @@ function DroneHUD.Update(
 
 	-- 5. Modo de cámara y controles de arsenal
 	if isFPV then
-		self.camLabel.Text = "CAM: FPV COCKPIT // [LMB] PLASMA // [C] EMP // [V] 3RA PERSONA // [X] FRENO"
+		self.camLabel.Text = "CAM: FPV // [LMB] ARMA // [Z] PURGA // [T] BENGALAS // [C] EMP // [R] MISIL // [X] FRENO"
 		self.camLabel.TextColor3 = COLOR_NEON_CYAN
 	else
-		self.camLabel.Text = "CAM: 3RA PERSONA // [LMB] PLASMA // [C] EMP // [V] FPV // [X] FRENO"
+		self.camLabel.Text = "CAM: 3RA PERSONA // [LMB] ARMA // [Z] PURGA // [T] BENGALAS // [C] EMP // [R] MISIL // [X] FRENO"
 		self.camLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
 	end
 
@@ -1193,6 +1225,24 @@ function DroneHUD.Update(
 	else
 		self.empStatusLabel.Text = "PULSO EMP [C]: ¡LISTO! ⚡"
 		self.empStatusLabel.TextColor3 = COLOR_NEON_CYAN
+	end
+
+	local ventCD = ventCooldownRemaining or 0
+	if ventCD > 0.1 then
+		self.ventStatusLabel.Text = string.format("PURGA [Z]: RECARGA (%.1fs)", ventCD)
+		self.ventStatusLabel.TextColor3 = COLOR_TEXT_MUTED
+	else
+		self.ventStatusLabel.Text = "PURGA [Z]: ¡LISTO! ❄"
+		self.ventStatusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
+	end
+
+	local flareCD = flareCooldownRemaining or 0
+	if flareCD > 0.1 then
+		self.flareStatusLabel.Text = string.format("BENGALAS [T]: RECARGA (%.1fs)", flareCD)
+		self.flareStatusLabel.TextColor3 = COLOR_TEXT_MUTED
+	else
+		self.flareStatusLabel.Text = "BENGALAS [T]: ¡LISTO! 🔥"
+		self.flareStatusLabel.TextColor3 = Color3.fromRGB(255, 160, 40)
 	end
 
 	-- 9. Radar Táctico de Amenazas 360° (Rango: 320 studs para cobertura total del sector metropolitano)

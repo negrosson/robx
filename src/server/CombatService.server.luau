@@ -70,6 +70,8 @@ local onHeatUpdateEvent     = ensureRemote(NetworkEvents.Names.OnHeatUpdate)
 local onBountyEvent         = ensureRemote(NetworkEvents.Names.OnBountyAwarded)
 -- Servidor → Cliente: Confirmación de impacto para Hitmarker táctico
 local onTargetHitEvent      = ensureRemote(NetworkEvents.Names.OnTargetHit)
+local onVentHeatEvent       = ensureRemote(NetworkEvents.Names.VentHeat)
+local onDeployFlaresEvent   = ensureRemote(NetworkEvents.Names.DeployFlares)
 local flightStateEvent      = ensureRemote(NetworkEvents.Names.DroneFlightState)
 local droneDestroyedEvent   = ensureRemote(NetworkEvents.Names.DroneDestroyed)
 
@@ -541,6 +543,39 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 				end
 			end
 		end
+
+		-- Área de efecto y detonación de Magma-Orb Sobrecargado
+		if weaponSpec.id == "charged_plasma_blast" then
+			local boom = Instance.new("Part")
+			boom.Name = "ChargedBlastExplosion"
+			boom.Shape = Enum.PartType.Ball
+			boom.Size = Vector3.new(4, 4, 4)
+			boom.Position = finalTargetPos
+			boom.Material = Enum.Material.Neon
+			boom.Color = Color3.fromRGB(255, 120, 20)
+			boom.CanCollide = false
+			boom.Anchored = true
+			boom.Parent = Workspace
+			Debris:AddItem(boom, 0.35)
+
+			local tw = TweenService:Create(boom, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = Vector3.new(28, 28, 28),
+				Transparency = 1,
+			})
+			tw:Play()
+
+			for part, state in pairs(activeDrones) do
+				if part and part.Parent and part ~= targetPart and part ~= shooterDrone then
+					local d = (part.Position - finalTargetPos).Magnitude
+					if d <= 18 then
+						local splashDmg = weaponSpec.damage * (1 - d / 18) * 0.75
+						applyDamage(state, splashDmg, weaponSpec, player, finalTargetPos)
+						local pushDir = (part.Position - finalTargetPos).Unit
+						part.AssemblyLinearVelocity += pushDir * 40
+					end
+				end
+			end
+		end
 	end
 
 	-- 7. Misil: generar proyectil físico en el servidor
@@ -660,6 +695,9 @@ onEMPEvent.OnServerEvent:Connect(function(player: Player)
 				local ao = part:FindFirstChild("FlightOrientation") :: AlignOrientation?
 				if lv then lv.Enabled = false end
 				if ao then ao.Enabled = false end
+				-- Desestabilización física y caída en picada de motores apagados
+				part.AssemblyLinearVelocity = Vector3.new(part.AssemblyLinearVelocity.X * 0.2, -45, part.AssemblyLinearVelocity.Z * 0.2)
+				part.AssemblyAngularVelocity = Vector3.new(math.random(-5, 5), math.random(-5, 5), math.random(-5, 5))
 
 				local hl = Instance.new("Highlight")
 				hl.Name = "EMPHighlight"
@@ -682,6 +720,92 @@ onEMPEvent.OnServerEvent:Connect(function(player: Player)
 	end
 
 	print(string.format("[CombatService] Pulso EMP completado: %d enemigos paralizados durante %.1fs", affectedCount, EMP_STUN_DURATION))
+end)
+
+----------------------------------------------------------------------
+-- EVENTOS DE ACTIVACIÓN TÁCTICA: PURGA DE CALOR Y BENGALAS
+----------------------------------------------------------------------
+onVentHeatEvent.OnServerEvent:Connect(function(player: Player)
+	local shooterDrone: BasePart? = nil
+	for part, state in pairs(activeDrones) do
+		if state.owner == player then
+			shooterDrone = part
+			break
+		end
+	end
+	if not shooterDrone or not shooterDrone.Parent then return end
+	local state = activeDrones[shooterDrone]
+	if not state then return end
+
+	state.heat = 0
+	state.isEMPed = false
+
+	-- Sonido de despresurización criogénica
+	local ventSfx = Instance.new("Sound")
+	ventSfx.Name = "VentSfx"
+	ventSfx.SoundId = "rbxassetid://9114223170"
+	ventSfx.Volume = 1.3
+	ventSfx.PlaybackSpeed = 0.85
+	ventSfx.Parent = shooterDrone
+	ventSfx:Play()
+	Debris:AddItem(ventSfx, 2)
+end)
+
+onDeployFlaresEvent.OnServerEvent:Connect(function(player: Player)
+	local shooterDrone: BasePart? = nil
+	for part, state in pairs(activeDrones) do
+		if state.owner == player then
+			shooterDrone = part
+			break
+		end
+	end
+	if not shooterDrone or not shooterDrone.Parent then return end
+
+	local origin = shooterDrone.Position
+	local backDir = -shooterDrone.CFrame.LookVector
+	local rightDir = shooterDrone.CFrame.RightVector
+
+	-- Desplegar 4 bengalas pirotécnicas con luz
+	local flareOffsets = {
+		backDir * 5 + rightDir * 4,
+		backDir * 5 - rightDir * 4,
+		backDir * 8 + rightDir * 7,
+		backDir * 8 - rightDir * 7,
+	}
+
+	for _, offset in ipairs(flareOffsets) do
+		local flare = Instance.new("Part")
+		flare.Name = "ThermalFlare"
+		flare.Shape = Enum.PartType.Ball
+		flare.Size = Vector3.new(1.2, 1.2, 1.2)
+		flare.Position = origin + offset
+		flare.Material = Enum.Material.Neon
+		flare.Color = Color3.fromRGB(255, 220, 60)
+		flare.CanCollide = false
+		flare.Anchored = false
+		flare.Parent = Workspace
+		flare.AssemblyLinearVelocity = (backDir + Vector3.new(0, -0.3, 0)).Unit * math.random(35, 55) + rightDir * math.random(-15, 15)
+		Debris:AddItem(flare, 2.5)
+
+		local light = Instance.new("PointLight")
+		light.Color = Color3.fromRGB(255, 180, 40)
+		light.Brightness = 5
+		light.Range = 26
+		light.Parent = flare
+	end
+
+	-- Desorientar enemigos en radio de 85 studs
+	local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+	if enemyFolder then
+		for _, enemy in ipairs(enemyFolder:GetChildren()) do
+			if enemy:IsA("BasePart") and (enemy.Position - origin).Magnitude <= 85 then
+				local tag = Instance.new("BoolValue")
+				tag.Name = "FlaresConfused"
+				tag.Parent = enemy
+				Debris:AddItem(tag, 3.5)
+			end
+		end
+	end
 end)
 
 ----------------------------------------------------------------------

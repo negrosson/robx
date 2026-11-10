@@ -285,6 +285,16 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		isAiming            = false,
 		shakeTrauma         = 0,
 		targetHitConn       = nil :: RBXScriptConnection?,
+		heatUpdateConn      = nil :: RBXScriptConnection?,
+
+		-- Arsenal Táctico y Contramedidas (Pilar 2)
+		isChargingShot      = false,
+		lmbPressTime        = 0,
+		lastVentTime        = 0,
+		ventCooldown        = 8.0,
+		lastFlareTime       = 0,
+		flareCooldown       = 10.0,
+		chargingVfx         = nil :: Part?,
 
 		-- estado
 		isFPV      = false,
@@ -325,6 +335,21 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 			if hudAny and hudAny.TriggerHitmarker then
 				local isKill = if typeof(hitData) == "table" and hitData.isKill then true else false
 				hudAny:TriggerHitmarker(isKill)
+			end
+		end)
+	end
+
+	-- Conectar escucha de actualización de calor autoritativa del servidor
+	local onHeatEv = self:GetRemoteEvent("OnHeatUpdate")
+	if onHeatEv then
+		self.heatUpdateConn = onHeatEv.OnClientEvent:Connect(function(heatRatio: number)
+			if typeof(heatRatio) == "number" then
+				self.currentHeat = heatRatio * (self.maxHeat or 100)
+				if heatRatio >= 0.85 then
+					self.isWeaponOverheated = true
+				elseif heatRatio < 0.50 then
+					self.isWeaponOverheated = false
+				end
 			end
 		end)
 	end
@@ -750,6 +775,44 @@ function DroneController:StartFlying()
 		local hpRatio = (self.currentHealth or 100) / (self.maxHealth or 100)
 		local heatRatio = (self.currentHeat or 0) / (self.maxHeat or 100)
 		local empRemaining = math.max(0, (self.empCooldown or 10.0) - (os.clock() - (self.lastEMPTime or 0)))
+		local ventRemaining = math.max(0, (self.ventCooldown or 8.0) - (os.clock() - (self.lastVentTime or 0)))
+		local flareRemaining = math.max(0, (self.flareCooldown or 10.0) - (os.clock() - (self.lastFlareTime or 0)))
+
+		-- Visual de orbe de plasma cargándose en el morro del dron (Pilar 2)
+		if self.isChargingShot and not self.isEMPed and not self.isWeaponOverheated then
+			local chargeElapsed = os.clock() - (self.lmbPressTime or 0)
+			local chargeRatio = math.clamp(chargeElapsed / 0.65, 0, 1)
+			if chargeElapsed > 0.08 then
+				local muzzlePos = self.rootPart.Position + self.rootPart.CFrame.LookVector * 1.6 + Vector3.new(0, 0.2, 0)
+				if not self.chargingVfx or not self.chargingVfx.Parent then
+					local orb = Instance.new("Part")
+					orb.Name = "LocalChargingOrb"
+					orb.Shape = Enum.PartType.Ball
+					orb.Material = Enum.Material.Neon
+					orb.CanCollide = false
+					orb.Anchored = true
+					orb.CastShadow = false
+					orb.Color = Color3.fromRGB(255, 180, 50)
+					orb.Transparency = 0.2
+					orb.Parent = Workspace
+					self.chargingVfx = orb
+				end
+				local orb = self.chargingVfx
+				local s = 0.5 + chargeRatio * 1.5
+				orb.Size = Vector3.new(s, s, s)
+				orb.Position = muzzlePos
+				if chargeRatio >= 1.0 then
+					orb.Color = Color3.fromRGB(255, 100, 20)
+				else
+					orb.Color = Color3.fromRGB(255, 200, 50)
+				end
+			end
+		else
+			if self.chargingVfx then
+				self.chargingVfx:Destroy()
+				self.chargingVfx = nil
+			end
+		end
 
 		local rushActive, rushRemaining, _ = false, 0, 1.0
 		if self.deliveryManager and (self.deliveryManager :: any).GetRushInfo then
@@ -798,7 +861,9 @@ function DroneController:StartFlying()
 					dt,
 					rushActive,
 					rushRemaining,
-					pilotRank
+					pilotRank,
+					ventRemaining,
+					flareRemaining
 				)
 			end)
 		end
@@ -821,6 +886,12 @@ function DroneController:StopFlying()
 	if not self.isFlying then return end
 	self.isFlying = false
 	print("[DroneController] StopFlying() llamado")
+
+	self.isChargingShot = false
+	if self.chargingVfx then
+		self.chargingVfx:Destroy()
+		self.chargingVfx = nil
+	end
 
 	-- Parar loop
 	if self.connection then
@@ -930,13 +1001,14 @@ function DroneController:BindInputs()
 		local focused = UserInputService:GetFocusedTextBox()
 		if focused then return end
 
-		-- Disparo táctico con MouseButton1 (LMB)
+		-- Disparo táctico con MouseButton1 (LMB: tap para normal, hold >= 0.65s para disparo cargado)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			if self.isFlying then
 				if self.isFPV then
 					UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 				end
-				self:FireWeapon()
+				self.isChargingShot = true
+				self.lmbPressTime = os.clock()
 			end
 			return
 		end
@@ -959,6 +1031,8 @@ function DroneController:BindInputs()
 		elseif k == Enum.KeyCode.Space      then self.inputState.up        = true
 		elseif k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.LeftControl then self.inputState.down = true
 		elseif k == Enum.KeyCode.C          then self:TriggerEMP()
+		elseif k == Enum.KeyCode.Z          then self:VentHeat()
+		elseif k == Enum.KeyCode.T          then self:DeployFlares()
 		elseif k == Enum.KeyCode.Q          then self.inputState.turbo     = true
 		elseif k == Enum.KeyCode.X          then self.inputState.brake     = true
 		elseif k == Enum.KeyCode.Left       then self.inputState.turnLeft  = true
@@ -1039,6 +1113,23 @@ function DroneController:BindInputs()
 	end)
 
 	self.inputEndedConn = UserInputService.InputEnded:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if self.isChargingShot and self.isFlying then
+				self.isChargingShot = false
+				if self.chargingVfx then
+					self.chargingVfx:Destroy()
+					self.chargingVfx = nil
+				end
+				local holdDuration = os.clock() - (self.lmbPressTime or 0)
+				if holdDuration >= 0.65 then
+					self:FireChargedWeapon()
+				else
+					self:FireWeapon()
+				end
+			end
+			return
+		end
+
 		if input.UserInputType == Enum.UserInputType.MouseButton2 then
 			self.isAiming = false
 			return
@@ -1077,6 +1168,11 @@ end
 
 function DroneController:UnbindInputs()
 	self.isAiming = false
+	self.isChargingShot = false
+	if self.chargingVfx then
+		self.chargingVfx:Destroy()
+		self.chargingVfx = nil
+	end
 	if self.inputBeganConn then self.inputBeganConn:Disconnect(); self.inputBeganConn = nil end
 	if self.inputEndedConn then self.inputEndedConn:Disconnect(); self.inputEndedConn = nil end
 	if self.mouseMoveConn  then self.mouseMoveConn:Disconnect();  self.mouseMoveConn  = nil end
@@ -1319,6 +1415,179 @@ function DroneController:SpawnLocalPlasmaBolt(startPos: Vector3, endPos: Vector3
 	end)
 end
 
+-- ═══ 1B. DISPARO CARGADO — Magma-Orb Sobrecargado (LMB sostenido >= 0.65s) ═══
+function DroneController:FireChargedWeapon()
+	if not self.isFlying then return end
+	if self.isEMPed then return end
+
+	local now = os.clock()
+	if now - (self.lastWeaponFire or 0) < 0.4 then return end
+
+	if self.isWeaponOverheated then
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function() (self.hud :: any):ShowHint("¡SOBRECALENTAMIENTO! Purga con [Z] o espera enfriamiento", true) end)
+		end
+		return
+	end
+
+	self.lastWeaponFire = now
+
+	local cam = Workspace.CurrentCamera
+	local originPos = self.rootPart.Position + self.rootPart.CFrame.LookVector * 1.5 + Vector3.new(0, 0.2, 0)
+	local targetPos: Vector3
+	local targetPart: BasePart? = nil
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	local excludeList = { self.rootPart }
+	local lp = Players.LocalPlayer
+	if lp and lp.Character then
+		table.insert(excludeList, lp.Character)
+	end
+	rayParams.FilterDescendantsInstances = excludeList
+
+	if self.lockedTarget and self.lockedTarget.Parent then
+		targetPart = self.lockedTarget
+		targetPos = self.lockedTarget.Position
+	elseif cam then
+		local unitRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 240, rayParams)
+		if hit then
+			targetPos = hit.Position
+			if hit.Instance and hit.Instance:IsA("BasePart") then
+				targetPart = hit.Instance
+			end
+		else
+			targetPos = unitRay.Origin + unitRay.Direction * 200
+		end
+	else
+		targetPos = originPos + self.rootPart.CFrame.LookVector * 180
+	end
+
+	-- Comprobar colisión estricta de trayectoria contra obstáculos
+	local toTarget = targetPos - originPos
+	if toTarget.Magnitude > 0.5 then
+		local trajHit = Workspace:Raycast(originPos, toTarget, rayParams)
+		if trajHit and trajHit.Instance then
+			local hitObj = trajHit.Instance
+			if hitObj ~= targetPart and not (targetPart and hitObj:IsDescendantOf(targetPart)) then
+				targetPos = trajHit.Position
+				targetPart = hitObj
+			end
+		end
+	end
+
+	-- Simulación de proyectil de orbe pesado en el cliente
+	self:SpawnLocalPlasmaOrb(originPos, targetPos)
+
+	-- Fogonazo masivo en el morro del dron
+	local flash = self.rootPart:FindFirstChild("MuzzleFlashLight") :: PointLight?
+	if not flash then
+		flash = Instance.new("PointLight")
+		flash.Name = "MuzzleFlashLight"
+		flash.Parent = self.rootPart
+	end
+	flash.Color = Color3.fromRGB(255, 120, 20)
+	flash.Range = 22
+	flash.Brightness = 6.0
+	flash.Enabled = true
+	task.delay(0.08, function()
+		if flash and flash.Parent then flash.Enabled = false end
+	end)
+
+	-- Retroceso contundente y sacudida de pantalla intensa (Pilar 2)
+	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.38)
+	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 3.8
+
+	-- Sonido de cañón de plasma sobrecargado
+	local heavySfx = Instance.new("Sound")
+	heavySfx.SoundId = "rbxassetid://9114223400"
+	heavySfx.Volume = 2.4
+	heavySfx.PlaybackSpeed = 0.95
+	heavySfx.Parent = self.rootPart
+	heavySfx:Play()
+	Debris:AddItem(heavySfx, 2)
+
+	-- Predicción de impacto táctico
+	local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+	if targetPart and enemyFolder and (targetPart == enemyFolder or targetPart:IsDescendantOf(enemyFolder)) then
+		local hudAny: any = self.hud
+		if hudAny and hudAny.TriggerHitmarker then
+			hudAny:TriggerHitmarker(false)
+		end
+	end
+
+	-- Generar calor de disparo cargado (+28)
+	self.currentHeat = math.min(self.maxHeat or 100, (self.currentHeat or 0) + 28)
+	if self.currentHeat >= 85 then
+		self.isWeaponOverheated = true
+	end
+
+	-- Notificar servidor para daño autoritativo de área y quemadura
+	local onFireEv = self:GetRemoteEvent("OnFireWeapon")
+	if onFireEv then
+		onFireEv:FireServer({
+			weaponId   = "charged_plasma_blast",
+			origin     = originPos,
+			target     = targetPos,
+			targetPart = targetPart,
+		})
+	end
+end
+
+-- Simula orbe pesado de plasma en el cliente con explosión de impacto
+function DroneController:SpawnLocalPlasmaOrb(startPos: Vector3, endPos: Vector3)
+	local orb = Instance.new("Part")
+	orb.Name = "LocalPlasmaOrb"
+	orb.Shape = Enum.PartType.Ball
+	orb.Size = Vector3.new(2.4, 2.4, 2.4)
+	orb.Material = Enum.Material.Neon
+	orb.Color = Color3.fromRGB(255, 120, 20)
+	orb.CanCollide = false
+	orb.CastShadow = false
+	orb.Massless = true
+	orb.CFrame = CFrame.lookAt(startPos, endPos)
+	orb.Parent = Workspace
+
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromRGB(255, 140, 20)
+	light.Brightness = 4
+	light.Range = 16
+	light.Parent = orb
+
+	local dist = (endPos - startPos).Magnitude
+	local duration = math.clamp(dist / 150, 0.08, 1.8)
+
+	local tween = TweenService:Create(
+		orb,
+		TweenInfo.new(duration, Enum.EasingStyle.Linear),
+		{ CFrame = CFrame.lookAt(endPos, endPos + (endPos - startPos).Unit) }
+	)
+	tween:Play()
+	tween.Completed:Connect(function()
+		if orb.Parent then
+			local blast = Instance.new("Part")
+			blast.Shape = Enum.PartType.Ball
+			blast.Size = Vector3.new(4, 4, 4)
+			blast.Material = Enum.Material.Neon
+			blast.Color = Color3.fromRGB(255, 100, 20)
+			blast.Position = endPos
+			blast.CanCollide = false
+			blast.Anchored = true
+			blast.Parent = Workspace
+			Debris:AddItem(blast, 0.28)
+
+			local twBlast = TweenService:Create(
+				blast,
+				TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Size = Vector3.new(24, 24, 24), Transparency = 1 }
+			)
+			twBlast:Play()
+			orb:Destroy()
+		end
+	end)
+end
+
 -- Activa la contramedida de pulso electromagnético [C]
 function DroneController:TriggerEMP()
 	if not self.isFlying then return end
@@ -1373,6 +1642,139 @@ function DroneController:SpawnLocalEMPWave(centerPos: Vector3)
 	tween.Completed:Connect(function()
 		if sphere.Parent then sphere:Destroy() end
 	end)
+end
+
+-- ═══ 2B. PURGA DE CALOR CRIOGÉNICA ACTIVA [Z] ═══
+function DroneController:VentHeat()
+	if not self.isFlying then return end
+	if self.isEMPed then return end
+
+	local now = os.clock()
+	local elapsed = now - (self.lastVentTime or 0)
+	if elapsed < (self.ventCooldown or 8.0) then
+		local remaining = math.ceil((self.ventCooldown or 8.0) - elapsed)
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function() (self.hud :: any):ShowHint(string.format("PURGA EN RECARGA (%ds)", remaining), true) end)
+		end
+		return
+	end
+
+	if (self.currentHeat or 0) < 15 and not self.isWeaponOverheated then
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function() (self.hud :: any):ShowHint("NÚCLEO FRÍO: No requiere purga criogénica (<15%)", false) end)
+		end
+		return
+	end
+
+	self.lastVentTime = now
+	self.currentHeat = 0
+	self.isWeaponOverheated = false
+
+	-- Sonido criogénico de alta presión
+	local hissSfx = Instance.new("Sound")
+	hissSfx.SoundId = "rbxassetid://9114223170"
+	hissSfx.Volume = 1.6
+	hissSfx.PlaybackSpeed = 0.8
+	hissSfx.Parent = self.rootPart
+	hissSfx:Play()
+	Debris:AddItem(hissSfx, 2)
+
+	-- Efecto visual local de chorros de vapor criogénico por los costados
+	local leftDir = -self.rootPart.CFrame.RightVector
+	local rightDir = self.rootPart.CFrame.RightVector
+	for _, dir in ipairs({ leftDir, rightDir }) do
+		local steam = Instance.new("Part")
+		steam.Size = Vector3.new(0.6, 0.6, 1.8)
+		steam.CFrame = CFrame.lookAt(self.rootPart.Position + dir * 1.4, self.rootPart.Position + dir * 6)
+		steam.Material = Enum.Material.Neon
+		steam.Color = Color3.fromRGB(150, 230, 255)
+		steam.Transparency = 0.2
+		steam.CanCollide = false
+		steam.Anchored = true
+		steam.Parent = Workspace
+		Debris:AddItem(steam, 0.35)
+
+		local tw = TweenService:Create(steam, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(2.2, 2.2, 6.0),
+			Transparency = 1,
+		})
+		tw:Play()
+	end
+
+	if self.hud and (self.hud :: any).ShowHint then
+		pcall(function() (self.hud :: any):ShowHint("¡PURGA CRIOGÉNICA EXITOSA! CALOR 0% // NÚCLEO ENFRIADO", false) end)
+	end
+
+	-- Notificar servidor
+	local onVentEv = self:GetRemoteEvent("VentHeat")
+	if onVentEv then
+		onVentEv:FireServer()
+	end
+end
+
+-- ═══ 2C. BENGALAS TÉRMICAS / CONTRAMEDIDAS [T] ═══
+function DroneController:DeployFlares()
+	if not self.isFlying then return end
+	if self.isEMPed then return end
+
+	local now = os.clock()
+	local elapsed = now - (self.lastFlareTime or 0)
+	if elapsed < (self.flareCooldown or 10.0) then
+		local remaining = math.ceil((self.flareCooldown or 10.0) - elapsed)
+		if self.hud and (self.hud :: any).ShowHint then
+			pcall(function() (self.hud :: any):ShowHint(string.format("BENGALAS EN RECARGA (%ds)", remaining), true) end)
+		end
+		return
+	end
+
+	self.lastFlareTime = now
+
+	-- Sacudida leve y propulsión
+	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.18)
+
+	-- Sonido de eyección pirotécnica de contramedidas
+	local popSfx = Instance.new("Sound")
+	popSfx.SoundId = "rbxassetid://9114223400"
+	popSfx.Volume = 1.5
+	popSfx.PlaybackSpeed = 1.6
+	popSfx.Parent = self.rootPart
+	popSfx:Play()
+	Debris:AddItem(popSfx, 2)
+
+	-- Generación de 4 bengalas locales brillantes
+	local origin = self.rootPart.Position
+	local backDir = -self.rootPart.CFrame.LookVector
+	local rightDir = self.rootPart.CFrame.RightVector
+
+	for i = 1, 4 do
+		local flare = Instance.new("Part")
+		flare.Name = "LocalFlare"
+		flare.Shape = Enum.PartType.Ball
+		flare.Size = Vector3.new(0.8, 0.8, 0.8)
+		flare.Position = origin + backDir * 1.5 + rightDir * ((i - 2.5) * 0.8)
+		flare.Material = Enum.Material.Neon
+		flare.Color = Color3.fromRGB(255, 170, 40)
+		flare.CanCollide = false
+		flare.Parent = Workspace
+		flare.AssemblyLinearVelocity = (backDir + Vector3.new(0, -0.3, 0)).Unit * math.random(35, 50) + rightDir * math.random(-12, 12)
+		Debris:AddItem(flare, 2.5)
+
+		local light = Instance.new("PointLight")
+		light.Color = Color3.fromRGB(255, 180, 50)
+		light.Brightness = 4.5
+		light.Range = 24
+		light.Parent = flare
+	end
+
+	if self.hud and (self.hud :: any).ShowHint then
+		pcall(function() (self.hud :: any):ShowHint("¡CONTRAMEDIDAS ACTIVADAS! (4 BENGALAS DESPLEGADAS)", false) end)
+	end
+
+	-- Notificar servidor para desplegar en red y desorientar enemigos
+	local onFlareEv = self:GetRemoteEvent("DeployFlares")
+	if onFlareEv then
+		onFlareEv:FireServer()
+	end
 end
 
 -- Aplica calor y gestiona estado EMP en el cliente (eco del servidor)
@@ -1584,7 +1986,6 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 
 			local mHit = Workspace:Raycast(prevPos, seg, mParams)
 			if mHit and mHit.Instance then
-				local hitObj = mHit.Instance
 				-- Si golpeó una torre, pared, helipuerto o edificio, detonar inmediatamente
 				conn:Disconnect()
 				if missile.Parent then
@@ -1726,6 +2127,10 @@ function DroneController:Destroy()
 	if self.targetHitConn then
 		self.targetHitConn:Disconnect()
 		self.targetHitConn = nil
+	end
+	if self.heatUpdateConn then
+		self.heatUpdateConn:Disconnect()
+		self.heatUpdateConn = nil
 	end
 	if self.hud and self.hud.Destroy then
 		pcall(function() self.hud:Destroy() end)
