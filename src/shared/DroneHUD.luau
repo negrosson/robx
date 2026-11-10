@@ -58,10 +58,6 @@ export type HUDInstance = {
 	hitmarkerFrame: Frame,
 	hitmarkerTicks: { Frame },
 	hitSound: Sound,
-	leadIndicator: Frame,
-	leadStroke: UIStroke,
-	leadDot: Frame,
-	leadTag: TextLabel,
 }
 
 local COLOR_BG = Color3.fromRGB(8, 14, 24)
@@ -200,51 +196,6 @@ function DroneHUD.new(): HUDInstance
 	hitSound.Volume = 0.8
 	hitSound.PlaybackSpeed = 1.8
 	hitSound.Parent = crosshairContainer
-
-	-- Retícula predictiva adelantada (Lead Indicator) en espacio de pantalla
-	local leadIndicator = Instance.new("Frame")
-	leadIndicator.Name = "LeadIndicator"
-	leadIndicator.Size = UDim2.fromOffset(26, 26)
-	leadIndicator.AnchorPoint = Vector2.new(0.5, 0.5)
-	leadIndicator.Position = UDim2.fromScale(0.5, 0.5)
-	leadIndicator.BackgroundTransparency = 1
-	leadIndicator.Visible = false
-	leadIndicator.Parent = mainContainer
-
-	local leadStroke = Instance.new("UIStroke")
-	leadStroke.Name = "LeadStroke"
-	leadStroke.Thickness = 1.5
-	leadStroke.Color = COLOR_NEON_CYAN
-	leadStroke.Parent = leadIndicator
-
-	local leadCorner = Instance.new("UICorner")
-	leadCorner.CornerRadius = UDim.new(1, 0)
-	leadCorner.Parent = leadIndicator
-
-	local leadDot = Instance.new("Frame")
-	leadDot.Name = "LeadDot"
-	leadDot.Size = UDim2.fromOffset(4, 4)
-	leadDot.AnchorPoint = Vector2.new(0.5, 0.5)
-	leadDot.Position = UDim2.fromScale(0.5, 0.5)
-	leadDot.BackgroundColor3 = COLOR_NEON_CYAN
-	leadDot.BorderSizePixel = 0
-	leadDot.Parent = leadIndicator
-
-	local leadDotCorner = Instance.new("UICorner")
-	leadDotCorner.CornerRadius = UDim.new(1, 0)
-	leadDotCorner.Parent = leadDot
-
-	local leadTag = Instance.new("TextLabel")
-	leadTag.Name = "LeadTag"
-	leadTag.Size = UDim2.fromOffset(90, 14)
-	leadTag.AnchorPoint = Vector2.new(0.5, 0)
-	leadTag.Position = UDim2.new(0.5, 0, 1, 2)
-	leadTag.BackgroundTransparency = 1
-	leadTag.Font = Enum.Font.Code
-	leadTag.Text = "LEAD // MIRA"
-	leadTag.TextColor3 = COLOR_NEON_CYAN
-	leadTag.TextSize = 10
-	leadTag.Parent = leadIndicator
 
 	-- Rótulo de Fijado de Objetivo (Lock-On para Combate en 3ra Persona y Misiles)
 	local targetLockTag = Instance.new("TextLabel")
@@ -1021,10 +972,6 @@ function DroneHUD.new(): HUDInstance
 		hitmarkerFrame = hitmarkerFrame,
 		hitmarkerTicks = hitmarkerTicks,
 		hitSound = hitSound,
-		leadIndicator = leadIndicator,
-		leadStroke = leadStroke,
-		leadDot = leadDot,
-		leadTag = leadTag,
 	}
 
 	return setmetatable(self, DroneHUD) :: any
@@ -1413,21 +1360,6 @@ function DroneHUD.SetCrosshairState(
 	self.crosshair.Size = UDim2.fromOffset(containerSize, containerSize)
 	if self.leftBracket then self.leftBracket.TextColor3 = targetColor end
 	if self.rightBracket then self.rightBracket.TextColor3 = targetColor end
-end
-
-function DroneHUD.SetLeadIndicator(self: HUDInstance, screenPos: Vector2?, isAligned: boolean?)
-	if screenPos then
-		self.leadIndicator.Visible = true
-		self.leadIndicator.Position = UDim2.fromOffset(screenPos.X, screenPos.Y)
-		local col = if isAligned then Color3.fromRGB(0, 255, 200) else COLOR_NEON_CYAN
-		self.leadStroke.Color = col
-		self.leadDot.BackgroundColor3 = col
-		self.leadTag.TextColor3 = col
-		self.leadTag.Text = if isAligned then "TARGET ALIGNED" else "LEAD"
-		self.leadIndicator.Size = if isAligned then UDim2.fromOffset(20, 20) else UDim2.fromOffset(24, 24)
-	else
-		self.leadIndicator.Visible = false
-	end
 end
 
 function DroneHUD.TriggerHitmarker(self: HUDInstance, isKill: boolean)

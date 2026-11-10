@@ -713,40 +713,13 @@ function DroneController:StartFlying()
 
 		self.lockedTarget = lockedEnemy
 		local hudAny: any = self.hud
-		if hudAny then
+		if hudAny and hudAny.SetCrosshairState then
 			if lockedEnemy and cam then
 				local cleanName = lockedEnemy.Name:gsub("_%d+", "")
 				local state: "neutral" | "locked" = if lockedDot >= 0.975 then "locked" else "neutral"
-				if hudAny.SetCrosshairState then
-					hudAny:SetCrosshairState(state, cleanName, lockedEnemyDist, self.isAiming)
-				end
-
-				-- Cálculo de Lead Indicator (Punto predictivo anticipado en tiempo real)
-				local enemyVel = if lockedEnemy:IsA("BasePart") then (lockedEnemy :: BasePart).AssemblyLinearVelocity else Vector3.zero
-				local plasmaSpeed = 180 -- studs/s
-				local flightTime = lockedEnemyDist / plasmaSpeed
-				local leadWorldPos = lockedEnemy.Position + enemyVel * flightTime
-				local screenPos, inView = cam:WorldToViewportPoint(leadWorldPos)
-
-				if inView and screenPos.Z > 0 then
-					local screenVec = Vector2.new(screenPos.X, screenPos.Y)
-					local centerVec = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-					local isAligned = (screenVec - centerVec).Magnitude < 25
-					if hudAny.SetLeadIndicator then
-						hudAny:SetLeadIndicator(screenVec, isAligned)
-					end
-				else
-					if hudAny.SetLeadIndicator then
-						hudAny:SetLeadIndicator(nil, false)
-					end
-				end
+				hudAny:SetCrosshairState(state, cleanName, lockedEnemyDist, self.isAiming)
 			else
-				if hudAny.SetCrosshairState then
-					hudAny:SetCrosshairState("neutral", nil, nil, self.isAiming)
-				end
-				if hudAny.SetLeadIndicator then
-					hudAny:SetLeadIndicator(nil, false)
-				end
+				hudAny:SetCrosshairState("neutral", nil, nil, self.isAiming)
 			end
 		end
 

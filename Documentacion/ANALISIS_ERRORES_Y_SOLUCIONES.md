@@ -1083,10 +1083,9 @@ El análisis del analizador sintáctico de Luau (`luau-lsp analyze`) arrojó:
 ## 34. Implementación Integral del Pilar 1: Apuntado en Tercera Persona, Retícula Predictiva y Feedback Sensorial ("Game Feel")
 
 ### 🎯 Objetivos Implementados
-1. **Retícula Predictiva de Tiro (*Lead Indicator*):**
-   * Se calcula en tiempo real la velocidad de desplazamiento del objetivo enemigo (`lockedTarget.AssemblyLinearVelocity`) y la velocidad del proyectil de plasma (180 studs/s).
-   * Se proyecta la posición futura anticipada mediante `cam:WorldToViewportPoint(leadPoint)`.
-   * Si la mira central del jugador se alinea a menos de 25 píxeles del punto de predicción, el aro del HUD se contrae e ilumina en dorado con el rótulo `TARGET ALIGNED`.
+1. **Puntería Clásica y Limpia (Eliminación de LEAD):**
+   * Por preferencia de diseño y para mantener la pantalla 100% limpia y sin distracciones, se retiró por completo el círculo flotante `LEAD`.
+   * El cálculo de tiro adelantado se realiza ahora puramente a ojo e intuición del piloto (estilo arcade clásico / habilidad táctica).
 2. **Mira Clásica Cyberpunk Neón y Hitmarker Táctico:**
    * **Mira Clásica Siempre Activa (Cian Neón):** Se eliminó el modo intrusivo de "Rastreo Amarillo" y la etiqueta parpadeante `[ ⚡ RASTREO ]` para preservar la estética limpia y clásica de la cabina.
    * **Bloqueo Exclusivo de Misiles (`state == "locked"`):** Únicamente cuando un enemigo está perfectamente centrado en la retícula para disparar un misil guiado, se activa el rótulo `[ 🎯 LOCK-ON: (OBJETIVO) | (DIST)m ]` y el punto central en rojo carmesí.
