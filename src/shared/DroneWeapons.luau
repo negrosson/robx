@@ -73,7 +73,7 @@ local MAGMA_SPIKE: WeaponSpec = {
 	fireRate        = 1.8,   -- disparos/s (cadencia media-alta)
 	projectileSpeed = 120,   -- studs/s (proyectil visible, no hitscan)
 	range           = 180,
-	heatGenerated   = 4,     -- el tirador también calienta sus sistemas
+	heatGenerated   = 8,     -- el tirador también calienta sus sistemas (permite probar purga Z)
 	heatOnTarget    = 12,    -- calor inyectado en el objetivo por impacto
 
 	effects = {

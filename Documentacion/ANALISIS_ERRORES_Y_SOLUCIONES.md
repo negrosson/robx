@@ -1145,6 +1145,58 @@ Se respetó con estricta rigurosidad la configuración previa de teclado para ev
 ---
 *Fin del documento de auditoría técnica del Plan Maestro, Combate y Logística.*
 
+---
+
+## 36. Corrección Integral de Apuntado (Lag/Desfase de Mira), Sincronización de Purga Térmica [Z] y Físicas de Impacto Cinético
+
+### 🔍 Análisis de Causas Raíz
+
+#### 1. Desfase y "Atascamiento" de la Mira al Disparar (~1 segundo de retraso)
+* **Interferencia de Raycast con Proyectiles Previos:** Al disparar en ráfaga rápida, los proyectiles locales y de red (`LocalPlasmaBolt`, `ServerPlasmaBolt`, `LocalChargingOrb`, destellos luminosos) se creaban en `Workspace` sin configurar `CanQuery = false`. Debido a que un proyectil tarda entre 0.8s y 2.5s en recorrer su distancia máxima, el Raycast de la cámara al hacer el siguiente clic colisionaba a quemarropa con la bala anterior en el aire. El disparo quedaba "atorado" exactamente en las coordenadas del proyectil previo a 2 studs frente a la nariz del dron.
+* **Pugna de Cámara (Spring Fighting en 3ra Persona):** En `Heartbeat`, el sistema de *screen shake* manipulaba directamente `cam.CFrame` mientras `CameraType == Enum.CameraType.Custom`. El script de cámara nativo de Roblox intentaba forzar de vuelta su posición y orientación mediante resortes internos, lo cual generaba un micro-congelamiento de ~1 segundo en el movimiento del ratón y desfasaba el cálculo de `flightYaw`.
+* **Secuestro de Mira Primaria por Cono de Fijación Amplio:** La función `FireWeapon` contenía la línea `if self.lockedTarget and self.lockedTarget.Parent then targetPart = self.lockedTarget`. El radar fijaba drones a 40° de apertura (`dot >= 0.94`), de modo que al apuntar a otro lado, las balas primarias seguían siendo teledirigidas al objetivo anterior hasta que salía completamente del cono.
+
+#### 2. Purga Térmica Criogénica [Z] Inoperativa
+* **Desincronización Servidor-Cliente:** En `CombatService.server.luau`, la rutina `onFireWeaponEvent` no acumulaba calor en el estado del dron del tirador en el servidor.
+* **Sobreescritura Cíclica a 0%:** El bucle de actualización a 20 Hz del servidor emitía `onHeatUpdateEvent:FireClient(state.owner, 0)` cada 50ms, machacando cualquier calor acumulado en el cliente y dejándolo en 0.
+* **Bloqueo por Umbral en Cliente:** La función `DroneController:VentHeat` contaba con la validación `if (self.currentHeat or 0) < 15 and not self.isWeaponOverheated then return end`. Al estar el calor forzado a 0 por el servidor, la purga quedaba permanentemente inhabilitada.
+
+---
+
+### 🛠️ Soluciones Técnicas Aplicadas
+
+#### A. Aislamiento Total de Raycast y Apuntado Fiel al Centro
+1. **Atributo `CanQuery = false` Universal:**
+   * Se aplicó `CanQuery = false` y `CanTouch = false` en todos los objetos visuales: `LocalPlasmaBolt`, `ServerPlasmaBolt`, `LocalChargingOrb`, `ChargedBlastExplosion`, `LocalEMPWave`, `EMPShockwave`, `VentSteam`, `LocalFlare`, `ThermalFlare`, `LocalSmartMissile`, `CyberMissile`, chispas y cráteres.
+   * Todos los efectos visuales y proyectiles ahora se alojan dentro de una carpeta unificada `Workspace.CombatFX`.
+   * Tanto el cliente en `DroneController.luau` como el servidor en `CombatService.server.luau` excluyen `CombatFX` de todos los parámetros de `RaycastParams`.
+2. **Eliminación del Conflicto de Cámara:**
+   * La manipulación de `cam.CFrame` por *screen shake* quedó restringida exclusivamente a FPV / Scriptable.
+   * Para 3ra persona se implementó `ApplyRecoilKick(isCharged)` en `DroneHUD.luau`: aplica un sacudón vertical ultra-rápido de 3 píxeles directamente sobre el contenedor de la retícula en la interfaz, con retorno en 80ms, brindando una sensación visceral de retroceso sin interferir jamás con los resortes de la cámara de Roblox.
+3. **Desacople entre Fuego Primario y Misiles:**
+   * `FireWeapon` y `FireChargedWeapon` disparan con precisión milimétrica hacia el punto de impacto exacto del Raycast central de la pantalla.
+   * El objetivo fijado (`lockedTarget`) quedó restringido estrictamente para los misiles guiados `[R]`, con un cono de fijación más riguroso (`dot >= 0.985`, ~10° de apertura) para evitar fijaciones accidentales.
+
+#### B. Sincronización y Restauración de Purga Térmica [Z]
+1. **Generación Autoritativa de Calor:** Al recibir la solicitud de disparo, `CombatService.server.luau` aplica inmediatamente `applyHeat(shooterState, weaponSpec.heatGenerated)` en el dron del jugador.
+2. **Recepción del Evento de Purga en Servidor:**
+   * Al presionar `[Z]`, el cliente valida que haya calor (`currentHeat > 0`) o que el arma esté sobrecalentada.
+   * El servidor resetea `state.heat = 0` y emite `onHeatUpdateEvent:FireClient(player, 0)`.
+   * El cliente actualiza instantáneamente la barra de calor y el indicador táctico del HUD a 0%, expulsando los chorros laterales de vapor criogénico neón.
+
+#### C. Físicas de Impacto Cinético en Entorno y Objetivos
+1. **Cráteres Térmicos Incandescentes (`ImpactScorch`):**
+   * Al impactar contra superficies sólidas del entorno (edificios, pavimento, rascacielos), se genera una decal/pieza plana fluorescente orientada según el vector normal de la superficie.
+   * Mediante `TweenService`, la marca pasa de rojo fuego incandescente a carbón mate oscuro en 1.8 segundos antes de desvanecerse.
+2. **Metralla y Chispas Físicas con Rebote Real (`ImpactSparks`):**
+   * Cada impacto eyecta entre 4 y 8 chispas neón con `CanCollide = true` y velocidad angular y lineal caótica.
+   * Las chispas rebotan físicamente contra las paredes y el suelo con amortiguación antes de consumirse en 0.45 segundos.
+3. **Impulso Cinético en Objetos no Anclados:**
+   * Los props, barreras y cajas no ancladas reciben una fuerza de impacto direccional calculada mediante `targetPart:ApplyImpulseAtPosition(bulletDir * force, hitPos)` (45 N para plasma estándar, 140 N para orbe cargado), saliendo despedidos físicamente.
+4. **Flinch / Reacción de Impacto en Drones Hostiles:**
+   * Los drones impactados reciben momento lineal directo (`AssemblyLinearVelocity += bulletDir * hitForce`) y desestabilización angular (`AssemblyAngularVelocity += randomTumble`), produciendo una respuesta de sacudida táctil contundente.
+
+
 
 
 

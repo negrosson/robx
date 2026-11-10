@@ -15,6 +15,14 @@ local TweenService      = game:GetService("TweenService")
 local DroneWeaponsModule = (ReplicatedStorage:FindFirstChild("DroneWeapons") or ReplicatedStorage:WaitForChild("DroneWeapons", 30)) :: ModuleScript
 local DroneWeapons = require(DroneWeaponsModule)
 
+-- Carpeta centralizada para efectos y proyectiles de combate (excluida de Raycasts de colisión)
+local combatFXFolder = Workspace:FindFirstChild("CombatFX")
+if not combatFXFolder then
+	combatFXFolder = Instance.new("Folder")
+	combatFXFolder.Name = "CombatFX"
+	combatFXFolder.Parent = Workspace
+end
+
 ----------------------------------------------------------------------
 -- CONSTANTES
 ----------------------------------------------------------------------
@@ -409,7 +417,7 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		end
 	end
 
-	local excludeList: { Instance } = {}
+	local excludeList: { Instance } = { combatFXFolder }
 	if shooterDrone then table.insert(excludeList, shooterDrone) end
 	local char = player.Character
 	if char then table.insert(excludeList, char) end
@@ -466,10 +474,12 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		bolt.Material = Enum.Material.Neon
 		bolt.Color = weaponSpec.projectileColor or Color3.fromRGB(255, 100, 0)
 		bolt.CanCollide = false
+		bolt.CanQuery = false
+		bolt.CanTouch = false
 		bolt.CastShadow = false
 		bolt.Massless = true
 		bolt.CFrame = CFrame.lookAt(originPos, finalTargetPos)
-		bolt.Parent = Workspace
+		bolt.Parent = combatFXFolder
 		Debris:AddItem(bolt, 3)
 
 		local boltFlightDist = (finalTargetPos - originPos).Magnitude
@@ -490,15 +500,17 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 				flash.Color = if not hasLOS then Color3.fromRGB(255, 170, 30) else bolt.Color
 				flash.Position = finalTargetPos
 				flash.CanCollide = false
+				flash.CanQuery = false
+				flash.CanTouch = false
 				flash.Anchored = true
-				flash.Parent = Workspace
+				flash.Parent = combatFXFolder
 				Debris:AddItem(flash, 0.14)
 				bolt:Destroy()
 			end
 		end)
 	end
 
-	-- 6. Procesar impacto en el objetivo
+	-- 6. Procesar impacto en el objetivo y físicas del entorno
 	if targetPart and typeof(targetPart) == "Instance" and targetPart:IsA("BasePart") then
 		local targetState = activeDrones[targetPart]
 		if not targetState and targetPart.Parent and targetPart.Parent:IsA("BasePart") then
@@ -511,6 +523,16 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 
 			-- Calor en el objetivo
 			applyHeat(targetState, weaponSpec.heatOnTarget)
+
+			-- FÍSICA DE IMPACTO: Impulso cinético y desestabilización angular en el objetivo
+			local bulletDir = (finalTargetPos - originPos).Unit
+			local hitForce = if weaponSpec.id == "charged_plasma_blast" then 45 else 22
+			targetPart.AssemblyLinearVelocity += bulletDir * hitForce
+			targetPart.AssemblyAngularVelocity += Vector3.new(
+				math.random(-8, 8),
+				math.random(-5, 5),
+				math.random(-8, 8)
+			)
 
 			-- Efectos secundarios
 			local now = os.clock()
@@ -542,6 +564,11 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 					triggerEMP(targetState)
 				end
 			end
+		elseif not targetPart.Anchored then
+			-- FÍSICA DE IMPACTO EN EL ENTORNO: Props, cajas y barreras no ancladas salen despedidos
+			local bulletDir = (finalTargetPos - originPos).Unit
+			local force = if weaponSpec.id == "charged_plasma_blast" then 140 else 45
+			targetPart:ApplyImpulseAtPosition(bulletDir * force, finalTargetPos)
 		end
 
 		-- Área de efecto y detonación de Magma-Orb Sobrecargado
@@ -554,8 +581,10 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 			boom.Material = Enum.Material.Neon
 			boom.Color = Color3.fromRGB(255, 120, 20)
 			boom.CanCollide = false
+			boom.CanQuery = false
+			boom.CanTouch = false
 			boom.Anchored = true
-			boom.Parent = Workspace
+			boom.Parent = combatFXFolder
 			Debris:AddItem(boom, 0.35)
 
 			local tw = TweenService:Create(boom, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -586,9 +615,11 @@ onFireWeaponEvent.OnServerEvent:Connect(function(player: Player, request: any)
 		missileVFX.Material    = Enum.Material.Neon
 		missileVFX.Color       = weaponSpec.projectileColor
 		missileVFX.CanCollide  = false
+		missileVFX.CanQuery    = false
+		missileVFX.CanTouch    = false
 		missileVFX.Massless    = true
 		missileVFX.CFrame      = CFrame.lookAt(originPos, targetPos)
-		missileVFX.Parent      = Workspace
+		missileVFX.Parent      = combatFXFolder
 		Debris:AddItem(missileVFX, 4)
 
 		-- Mover hacia el objetivo (guiado simple, Bézier en cliente para VFX)
@@ -663,9 +694,11 @@ onEMPEvent.OnServerEvent:Connect(function(player: Player)
 	shockwave.Color = Color3.fromRGB(0, 255, 230) -- Neon Cyan
 	shockwave.Transparency = 0.35
 	shockwave.CanCollide = false
+	shockwave.CanQuery = false
+	shockwave.CanTouch = false
 	shockwave.Anchored = true
 	shockwave.CastShadow = false
-	shockwave.Parent = Workspace
+	shockwave.Parent = combatFXFolder
 	Debris:AddItem(shockwave, 1.0)
 
 	local waveLight = Instance.new("PointLight")
@@ -733,22 +766,36 @@ onVentHeatEvent.OnServerEvent:Connect(function(player: Player)
 			break
 		end
 	end
-	if not shooterDrone or not shooterDrone.Parent then return end
-	local state = activeDrones[shooterDrone]
-	if not state then return end
+	if not shooterDrone then
+		local td = Workspace:FindFirstChild("TestDrone") :: BasePart?
+		if td then
+			shooterDrone = td
+			if not activeDrones[td] then
+				CombatService_Register(td, 100, 100, 8, 0.0, 0.55, player, nil)
+			end
+		end
+	end
 
-	state.heat = 0
-	state.isEMPed = false
+	if shooterDrone and shooterDrone.Parent then
+		local state = activeDrones[shooterDrone]
+		if state then
+			state.heat = 0
+			state.isEMPed = false
+		end
 
-	-- Sonido de despresurización criogénica
-	local ventSfx = Instance.new("Sound")
-	ventSfx.Name = "VentSfx"
-	ventSfx.SoundId = "rbxassetid://9114223170"
-	ventSfx.Volume = 1.3
-	ventSfx.PlaybackSpeed = 0.85
-	ventSfx.Parent = shooterDrone
-	ventSfx:Play()
-	Debris:AddItem(ventSfx, 2)
+		-- Sonido de despresurización criogénica
+		local ventSfx = Instance.new("Sound")
+		ventSfx.Name = "VentSfx"
+		ventSfx.SoundId = "rbxassetid://9114223170"
+		ventSfx.Volume = 1.3
+		ventSfx.PlaybackSpeed = 0.85
+		ventSfx.Parent = shooterDrone
+		ventSfx:Play()
+		Debris:AddItem(ventSfx, 2)
+	end
+
+	-- Notificar al cliente inmediatamente que el calor es 0%
+	onHeatUpdateEvent:FireClient(player, 0)
 end)
 
 onDeployFlaresEvent.OnServerEvent:Connect(function(player: Player)
@@ -782,8 +829,10 @@ onDeployFlaresEvent.OnServerEvent:Connect(function(player: Player)
 		flare.Material = Enum.Material.Neon
 		flare.Color = Color3.fromRGB(255, 220, 60)
 		flare.CanCollide = false
+		flare.CanQuery = false
+		flare.CanTouch = false
 		flare.Anchored = false
-		flare.Parent = Workspace
+		flare.Parent = combatFXFolder
 		flare.AssemblyLinearVelocity = (backDir + Vector3.new(0, -0.3, 0)).Unit * math.random(35, 55) + rightDir * math.random(-15, 15)
 		Debris:AddItem(flare, 2.5)
 

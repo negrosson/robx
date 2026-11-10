@@ -687,8 +687,8 @@ function DroneController:StartFlying()
 			end
 
 			-- Sacudida cinemática de pantalla (Screen Shake) por disparos, misiles y daño
-			self.shakeTrauma = math.max(0, (self.shakeTrauma or 0) - dt * 2.8)
-			if (self.shakeTrauma or 0) > 0.005 then
+			self.shakeTrauma = math.max(0, (self.shakeTrauma or 0) - dt * 6.5)
+			if (self.shakeTrauma or 0) > 0.005 and self.isFPV then
 				local shakeIntensity = (self.shakeTrauma or 0)^2
 				local nowClock = os.clock()
 				local pitchShake = (math.noise(nowClock * 32, 0, 0) - 0.5) * 0.024 * shakeIntensity
@@ -698,7 +698,7 @@ function DroneController:StartFlying()
 			end
 		end
 
-		-- Target Lock Detection & Lead Indicator (Detección cónica para mira central en 3ra Persona y FPV)
+		-- Target Lock Detection exclusivo para Misiles Guiados [R] (Cono cerrado de ~10°)
 		local lockedEnemy: BasePart? = nil
 		local lockedEnemyDist = 320
 		local lockedDot = 0
@@ -715,13 +715,15 @@ function DroneController:StartFlying()
 					local dist = toEnemy.Magnitude
 					if dist <= lockedEnemyDist and dist > 1.0 then
 						local dot = aimDir:Dot(toEnemy.Unit)
-						-- Cono de ~18 grados de tolerancia respecto al centro de la retícula
-						if dot >= 0.94 then
+						-- Cono preciso para fijar objetivo de misiles sin desfasar la puntería
+						if dot >= 0.985 then
 							-- Comprobar línea de visión física (no fijar enemigos detrás de torres o edificios)
 							local losParams = RaycastParams.new()
 							losParams.FilterType = Enum.RaycastFilterType.Exclude
-							local losExclude = { self.rootPart }
+							local losExclude: { Instance } = { self.rootPart }
 							if lp and lp.Character then table.insert(losExclude, lp.Character) end
+							local fxFolder = Workspace:FindFirstChild("CombatFX")
+							if fxFolder then table.insert(losExclude, fxFolder) end
 							losParams.FilterDescendantsInstances = losExclude
 
 							local losHit = Workspace:Raycast(aimOrigin, toEnemy, losParams)
@@ -785,16 +787,25 @@ function DroneController:StartFlying()
 			if chargeElapsed > 0.08 then
 				local muzzlePos = self.rootPart.Position + self.rootPart.CFrame.LookVector * 1.6 + Vector3.new(0, 0.2, 0)
 				if not self.chargingVfx or not self.chargingVfx.Parent then
+					local fxFolder = Workspace:FindFirstChild("CombatFX")
+					if not fxFolder then
+						fxFolder = Instance.new("Folder")
+						fxFolder.Name = "CombatFX"
+						fxFolder.Parent = Workspace
+					end
+
 					local orb = Instance.new("Part")
 					orb.Name = "LocalChargingOrb"
 					orb.Shape = Enum.PartType.Ball
 					orb.Material = Enum.Material.Neon
 					orb.CanCollide = false
+					orb.CanQuery = false
+					orb.CanTouch = false
 					orb.Anchored = true
 					orb.CastShadow = false
 					orb.Color = Color3.fromRGB(255, 180, 50)
 					orb.Transparency = 0.2
-					orb.Parent = Workspace
+					orb.Parent = fxFolder
 					self.chargingVfx = orb
 				end
 				local orb = self.chargingVfx
@@ -1276,58 +1287,67 @@ function DroneController:FireWeapon()
 	end
 
 	local now = os.clock()
-	if now - (self.lastWeaponFire or 0) < (self.weaponCooldown or 0.35) then
+	if now - (self.lastWeaponFire or 0) < 0.28 then
 		return
 	end
 	self.lastWeaponFire = now
 
-	-- Calcular origen y convergencia (prioriza el objetivo fijado por la retícula)
+	-- Calcular origen y convergencia de disparo recto por la retícula central
 	local cam = Workspace.CurrentCamera
 	local originPos = self.rootPart.Position + self.rootPart.CFrame.LookVector * (self.rootPart.Size.Z * 0.5 + 0.5)
 	local targetPos: Vector3
 	local targetPart: BasePart? = nil
+	local hitNormal: Vector3 = -self.rootPart.CFrame.LookVector
+
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
+	if not fxFolder then
+		fxFolder = Instance.new("Folder")
+		fxFolder.Name = "CombatFX"
+		fxFolder.Parent = Workspace
+	end
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	local lp = Players.LocalPlayer
-	local excludeList: { Instance } = { self.rootPart }
+	local excludeList: { Instance } = { self.rootPart, fxFolder }
 	if lp and lp.Character then table.insert(excludeList, lp.Character) end
 	rayParams.FilterDescendantsInstances = excludeList
 
-	if self.lockedTarget and self.lockedTarget.Parent then
-		targetPart = self.lockedTarget
-		targetPos = self.lockedTarget.Position
-	elseif cam then
+	-- Raycast directo desde el centro de la pantalla (mira) al infinito del mundo
+	if cam then
 		local unitRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 240, rayParams)
+		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 350, rayParams)
 		if hit then
 			targetPos = hit.Position
+			hitNormal = hit.Normal
 			if hit.Instance and hit.Instance:IsA("BasePart") then
 				targetPart = hit.Instance
 			end
 		else
-			targetPos = unitRay.Origin + unitRay.Direction * 200
+			targetPos = unitRay.Origin + unitRay.Direction * 300
+			hitNormal = -unitRay.Direction
 		end
 	else
-		targetPos = originPos + self.rootPart.CFrame.LookVector * 180
+		targetPos = originPos + self.rootPart.CFrame.LookVector * 200
+		hitNormal = -self.rootPart.CFrame.LookVector
 	end
 
-	-- Comprobar colisión estricta de trayectoria entre la boquilla y targetPos contra torres y obstáculos
+	-- Comprobar colisión estricta de trayectoria entre la boquilla y el punto de impacto
 	local toTarget = targetPos - originPos
 	if toTarget.Magnitude > 0.5 then
 		local trajHit = Workspace:Raycast(originPos, toTarget, rayParams)
 		if trajHit and trajHit.Instance then
 			local hitObj = trajHit.Instance
-			-- Si impactó una torre, pared, helipuerto o edificio antes de llegar a la nave enemiga
 			if hitObj ~= targetPart and not (targetPart and hitObj:IsDescendantOf(targetPart)) then
 				targetPos = trajHit.Position
+				hitNormal = trajHit.Normal
 				targetPart = hitObj
 			end
 		end
 	end
 
-	-- Simulación de proyectil local inmediata para feedback visual sin lag de red
-	self:SpawnLocalPlasmaBolt(originPos, targetPos)
+	-- Simulación de proyectil de plasma local con físicas de impacto
+	self:SpawnLocalPlasmaBolt(originPos, targetPos, hitNormal, targetPart)
 
 	-- Fogonazo de luz dinámica en el cañón
 	local flash = self.rootPart:FindFirstChild("MuzzleFlashLight") :: PointLight?
@@ -1344,21 +1364,18 @@ function DroneController:FireWeapon()
 		if flash and flash.Parent then flash.Enabled = false end
 	end)
 
-	-- Retroceso visual y micro-impulso físico táctil
+	-- Retroceso físico sutil en el dron (sin alterar la orientación orbital de la cámara)
 	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.16)
-	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 1.5
+	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 0.4
 
-	-- Predicción local de impacto (Hitmarker instantáneo para sensación arcade)
-	local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
-	if targetPart and enemyFolder and (targetPart == enemyFolder or targetPart:IsDescendantOf(enemyFolder)) then
-		local hudAny: any = self.hud
-		if hudAny and hudAny.TriggerHitmarker then
-			hudAny:TriggerHitmarker(false)
-		end
+	-- Recoil visual de retícula en HUD (snappy y arcade)
+	local hudAny: any = self.hud
+	if hudAny and hudAny.ApplyRecoilKick then
+		hudAny:ApplyRecoilKick(false)
 	end
 
-	-- Generar calor en el chasis
-	self.currentHeat = math.min(self.maxHeat or 100, (self.currentHeat or 0) + 4)
+	-- Generar calor en el chasis (+8)
+	self.currentHeat = math.min(self.maxHeat or 100, (self.currentHeat or 0) + 8)
 	if self.currentHeat >= 85 then
 		self.isWeaponOverheated = true
 	end
@@ -1375,21 +1392,30 @@ function DroneController:FireWeapon()
 	end
 end
 
--- Simula el proyectil de plasma en el cliente
-function DroneController:SpawnLocalPlasmaBolt(startPos: Vector3, endPos: Vector3)
+-- Simula proyectil de plasma en el cliente (totalmente invisible a Raycasts para evitar que la mira se trabe)
+function DroneController:SpawnLocalPlasmaBolt(startPos: Vector3, endPos: Vector3, hitNormal: Vector3?, hitPart: BasePart?)
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
+	if not fxFolder then
+		fxFolder = Instance.new("Folder")
+		fxFolder.Name = "CombatFX"
+		fxFolder.Parent = Workspace
+	end
+
 	local bolt = Instance.new("Part")
 	bolt.Name = "LocalPlasmaBolt"
 	bolt.Size = Vector3.new(0.5, 0.5, 2.0)
 	bolt.Material = Enum.Material.Neon
 	bolt.Color = Color3.fromRGB(255, 100, 0)
 	bolt.CanCollide = false
+	bolt.CanQuery = false   -- ¡CRÍTICO! Raycasts ignoran este proyectil
+	bolt.CanTouch = false
 	bolt.CastShadow = false
 	bolt.Massless = true
 	bolt.CFrame = CFrame.lookAt(startPos, endPos)
-	bolt.Parent = Workspace
+	bolt.Parent = fxFolder
 
 	local dist = (endPos - startPos).Magnitude
-	local duration = math.clamp(dist / 140, 0.05, 1.5)
+	local duration = math.clamp(dist / 170, 0.04, 1.2)
 
 	local tween = TweenService:Create(
 		bolt,
@@ -1399,20 +1425,140 @@ function DroneController:SpawnLocalPlasmaBolt(startPos: Vector3, endPos: Vector3
 	tween:Play()
 	tween.Completed:Connect(function()
 		if bolt.Parent then
-			-- Destello de impacto y chispas al colisionar contra la torre o nave
-			local flash = Instance.new("Part")
-			flash.Shape = Enum.PartType.Ball
-			flash.Size = Vector3.new(1.8, 1.8, 1.8)
-			flash.Material = Enum.Material.Neon
-			flash.Color = Color3.fromRGB(255, 160, 40)
-			flash.Position = endPos
-			flash.CanCollide = false
-			flash.Anchored = true
-			flash.Parent = Workspace
-			Debris:AddItem(flash, 0.10)
 			bolt:Destroy()
+			local normal = hitNormal or (startPos - endPos).Unit
+			self:SpawnImpactEffects(endPos, normal, hitPart, false)
 		end
 	end)
+end
+
+-- ═══ FÍSICAS DE IMPACTO Y EFECTOS EN EL ENTORNO Y OBJETIVOS ═══
+function DroneController:SpawnImpactEffects(hitPos: Vector3, hitNormal: Vector3, hitPart: BasePart?, isCharged: boolean)
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
+	if not fxFolder then
+		fxFolder = Instance.new("Folder")
+		fxFolder.Name = "CombatFX"
+		fxFolder.Parent = Workspace
+	end
+
+	local isEnemy = false
+	local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
+	if hitPart and enemyFolder and (hitPart == enemyFolder or hitPart:IsDescendantOf(enemyFolder)) then
+		isEnemy = true
+	end
+
+	-- 1. FÍSICAS DE IMPACTO: EMPUJE Y DESESTABILIZACIÓN
+	if hitPart and hitPart:IsA("BasePart") then
+		local bulletDir = -hitNormal
+		if isEnemy then
+			-- Desestabilización de dron hostil
+			local pushForce = if isCharged then 36 else 16
+			hitPart.AssemblyLinearVelocity += bulletDir * pushForce
+			hitPart.AssemblyAngularVelocity += Vector3.new(
+				math.random(-8, 8),
+				math.random(-6, 6),
+				math.random(-8, 8)
+			)
+			-- Confirmación instantánea de impacto (Hitmarker)
+			local hudAny: any = self.hud
+			if hudAny and hudAny.TriggerHitmarker then
+				hudAny:TriggerHitmarker(false)
+			end
+		elseif not hitPart.Anchored then
+			-- Objetos, cajas y props no anclados del entorno
+			local propForce = if isCharged then 120 else 40
+			hitPart:ApplyImpulseAtPosition(bulletDir * propForce, hitPos)
+		end
+	end
+
+	-- 2. CRÁTER / MARCA DE QUEMADURA TÉRMICA EN SUPERFICIES SÓLIDAS DEL ENTORNO
+	if not isEnemy and hitPart and hitPart.Anchored then
+		local scorch = Instance.new("Part")
+		scorch.Name = "ImpactScorch"
+		local sSize = if isCharged then 3.2 else 1.6
+		scorch.Size = Vector3.new(sSize, sSize, 0.04)
+		scorch.CFrame = CFrame.lookAt(hitPos + hitNormal * 0.03, hitPos + hitNormal)
+		scorch.Material = Enum.Material.Neon
+		scorch.Color = if isCharged then Color3.fromRGB(255, 100, 20) else Color3.fromRGB(255, 160, 40)
+		scorch.Transparency = 0.1
+		scorch.CanCollide = false
+		scorch.CanQuery = false
+		scorch.CanTouch = false
+		scorch.Anchored = true
+		scorch.CastShadow = false
+		scorch.Parent = fxFolder
+		Debris:AddItem(scorch, 2.0)
+
+		-- Decaimiento a carbón quemado y desvanecimiento suave
+		local twScorch = TweenService:Create(
+			scorch,
+			TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{
+				Color = Color3.fromRGB(25, 25, 25),
+				Transparency = 1,
+			}
+		)
+		twScorch:Play()
+	end
+
+	-- 3. CHISPAS FÍSICAS REBOTANTES (SHRAPNEL SPARKS)
+	local sparkCount = if isCharged then 8 else 4
+	for _ = 1, sparkCount do
+		local spark = Instance.new("Part")
+		spark.Name = "ImpactSpark"
+		spark.Size = Vector3.new(0.25, 0.25, 0.35)
+		spark.Material = Enum.Material.Neon
+		spark.Color = if isCharged then Color3.fromRGB(255, 140, 20) else Color3.fromRGB(255, 200, 50)
+		spark.CanCollide = true      -- ¡Rebota físicamente contra el suelo y paredes!
+		spark.CanQuery = false        -- ¡TOTALMENTE INVISIBLE a Raycasts para no trabar la mira!
+		spark.CanTouch = false
+		spark.Position = hitPos + hitNormal * 0.2
+		spark.Parent = fxFolder
+
+		local spread = Vector3.new(
+			(math.random() - 0.5) * 1.2,
+			math.random() * 0.8,
+			(math.random() - 0.5) * 1.2
+		)
+		local ejectionVel = (hitNormal + spread).Unit * math.random(20, 42)
+		spark.AssemblyLinearVelocity = ejectionVel
+		Debris:AddItem(spark, 0.45)
+	end
+
+	-- 4. DESTELLO DE LUZ Y DETONACIÓN LOCAL
+	local flash = Instance.new("Part")
+	flash.Name = "ImpactFlash"
+	flash.Shape = Enum.PartType.Ball
+	local flashSize = if isCharged then 5.0 else 2.2
+	flash.Size = Vector3.new(flashSize, flashSize, flashSize)
+	flash.Position = hitPos
+	flash.Material = Enum.Material.Neon
+	flash.Color = if isCharged then Color3.fromRGB(255, 100, 20) else Color3.fromRGB(255, 170, 40)
+	flash.CanCollide = false
+	flash.CanQuery = false
+	flash.CanTouch = false
+	flash.Anchored = true
+	flash.Parent = fxFolder
+	Debris:AddItem(flash, 0.12)
+
+	local twFlash = TweenService:Create(
+		flash,
+		TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{
+			Size = flash.Size * 1.6,
+			Transparency = 1,
+		}
+	)
+	twFlash:Play()
+
+	-- 5. SONIDO DE IMPACTO CINÉTICO / TÉRMICO
+	local sfx = Instance.new("Sound")
+	sfx.Name = "ImpactSFX"
+	sfx.SoundId = "rbxassetid://9114223170"
+	sfx.Volume = if isCharged then 1.8 else 1.2
+	sfx.PlaybackSpeed = if isEnemy then 1.8 else math.random(20, 24) / 10
+	sfx.Parent = flash
+	sfx:Play()
 end
 
 -- ═══ 1B. DISPARO CARGADO — Magma-Orb Sobrecargado (LMB sostenido >= 0.65s) ═══
@@ -1421,7 +1567,7 @@ function DroneController:FireChargedWeapon()
 	if self.isEMPed then return end
 
 	local now = os.clock()
-	if now - (self.lastWeaponFire or 0) < 0.4 then return end
+	if now - (self.lastWeaponFire or 0) < 0.35 then return end
 
 	if self.isWeaponOverheated then
 		if self.hud and (self.hud :: any).ShowHint then
@@ -1433,35 +1579,41 @@ function DroneController:FireChargedWeapon()
 	self.lastWeaponFire = now
 
 	local cam = Workspace.CurrentCamera
-	local originPos = self.rootPart.Position + self.rootPart.CFrame.LookVector * 1.5 + Vector3.new(0, 0.2, 0)
+	local originPos = self.rootPart.Position + self.rootPart.CFrame.LookVector * (self.rootPart.Size.Z * 0.5 + 0.8)
 	local targetPos: Vector3
 	local targetPart: BasePart? = nil
+	local hitNormal: Vector3 = -self.rootPart.CFrame.LookVector
+
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
+	if not fxFolder then
+		fxFolder = Instance.new("Folder")
+		fxFolder.Name = "CombatFX"
+		fxFolder.Parent = Workspace
+	end
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	local excludeList = { self.rootPart }
 	local lp = Players.LocalPlayer
-	if lp and lp.Character then
-		table.insert(excludeList, lp.Character)
-	end
+	local excludeList: { Instance } = { self.rootPart, fxFolder }
+	if lp and lp.Character then table.insert(excludeList, lp.Character) end
 	rayParams.FilterDescendantsInstances = excludeList
 
-	if self.lockedTarget and self.lockedTarget.Parent then
-		targetPart = self.lockedTarget
-		targetPos = self.lockedTarget.Position
-	elseif cam then
+	if cam then
 		local unitRay = cam:ViewportPointToRay(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 240, rayParams)
+		local hit = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 350, rayParams)
 		if hit then
 			targetPos = hit.Position
+			hitNormal = hit.Normal
 			if hit.Instance and hit.Instance:IsA("BasePart") then
 				targetPart = hit.Instance
 			end
 		else
-			targetPos = unitRay.Origin + unitRay.Direction * 200
+			targetPos = unitRay.Origin + unitRay.Direction * 300
+			hitNormal = -unitRay.Direction
 		end
 	else
-		targetPos = originPos + self.rootPart.CFrame.LookVector * 180
+		targetPos = originPos + self.rootPart.CFrame.LookVector * 200
+		hitNormal = -self.rootPart.CFrame.LookVector
 	end
 
 	-- Comprobar colisión estricta de trayectoria contra obstáculos
@@ -1472,13 +1624,14 @@ function DroneController:FireChargedWeapon()
 			local hitObj = trajHit.Instance
 			if hitObj ~= targetPart and not (targetPart and hitObj:IsDescendantOf(targetPart)) then
 				targetPos = trajHit.Position
+				hitNormal = trajHit.Normal
 				targetPart = hitObj
 			end
 		end
 	end
 
-	-- Simulación de proyectil de orbe pesado en el cliente
-	self:SpawnLocalPlasmaOrb(originPos, targetPos)
+	-- Simulación de proyectil de orbe pesado en el cliente con físicas de impacto
+	self:SpawnLocalPlasmaOrb(originPos, targetPos, hitNormal, targetPart)
 
 	-- Fogonazo masivo en el morro del dron
 	local flash = self.rootPart:FindFirstChild("MuzzleFlashLight") :: PointLight?
@@ -1495,9 +1648,14 @@ function DroneController:FireChargedWeapon()
 		if flash and flash.Parent then flash.Enabled = false end
 	end)
 
-	-- Retroceso contundente y sacudida de pantalla intensa (Pilar 2)
+	-- Retroceso físico y recoil visual en HUD
 	self.shakeTrauma = math.min(1.0, (self.shakeTrauma or 0) + 0.38)
-	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 3.8
+	self.currentVelocity = self.currentVelocity - self.rootPart.CFrame.LookVector * 1.2
+
+	local hudAny: any = self.hud
+	if hudAny and hudAny.ApplyRecoilKick then
+		hudAny:ApplyRecoilKick(true)
+	end
 
 	-- Sonido de cañón de plasma sobrecargado
 	local heavySfx = Instance.new("Sound")
@@ -1507,15 +1665,6 @@ function DroneController:FireChargedWeapon()
 	heavySfx.Parent = self.rootPart
 	heavySfx:Play()
 	Debris:AddItem(heavySfx, 2)
-
-	-- Predicción de impacto táctico
-	local enemyFolder = Workspace:FindFirstChild("EnemyDrones")
-	if targetPart and enemyFolder and (targetPart == enemyFolder or targetPart:IsDescendantOf(enemyFolder)) then
-		local hudAny: any = self.hud
-		if hudAny and hudAny.TriggerHitmarker then
-			hudAny:TriggerHitmarker(false)
-		end
-	end
 
 	-- Generar calor de disparo cargado (+28)
 	self.currentHeat = math.min(self.maxHeat or 100, (self.currentHeat or 0) + 28)
@@ -1535,8 +1684,15 @@ function DroneController:FireChargedWeapon()
 	end
 end
 
--- Simula orbe pesado de plasma en el cliente con explosión de impacto
-function DroneController:SpawnLocalPlasmaOrb(startPos: Vector3, endPos: Vector3)
+-- Simula orbe pesado de plasma en el cliente con explosión de impacto (CanQuery = false)
+function DroneController:SpawnLocalPlasmaOrb(startPos: Vector3, endPos: Vector3, hitNormal: Vector3?, hitPart: BasePart?)
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
+	if not fxFolder then
+		fxFolder = Instance.new("Folder")
+		fxFolder.Name = "CombatFX"
+		fxFolder.Parent = Workspace
+	end
+
 	local orb = Instance.new("Part")
 	orb.Name = "LocalPlasmaOrb"
 	orb.Shape = Enum.PartType.Ball
@@ -1544,10 +1700,12 @@ function DroneController:SpawnLocalPlasmaOrb(startPos: Vector3, endPos: Vector3)
 	orb.Material = Enum.Material.Neon
 	orb.Color = Color3.fromRGB(255, 120, 20)
 	orb.CanCollide = false
+	orb.CanQuery = false   -- ¡VITAL! No bloquea ni estorba el raycast del crosshair
+	orb.CanTouch = false
 	orb.CastShadow = false
 	orb.Massless = true
 	orb.CFrame = CFrame.lookAt(startPos, endPos)
-	orb.Parent = Workspace
+	orb.Parent = fxFolder
 
 	local light = Instance.new("PointLight")
 	light.Color = Color3.fromRGB(255, 140, 20)
@@ -1556,7 +1714,7 @@ function DroneController:SpawnLocalPlasmaOrb(startPos: Vector3, endPos: Vector3)
 	light.Parent = orb
 
 	local dist = (endPos - startPos).Magnitude
-	local duration = math.clamp(dist / 150, 0.08, 1.8)
+	local duration = math.clamp(dist / 150, 0.08, 1.5)
 
 	local tween = TweenService:Create(
 		orb,
@@ -1566,24 +1724,9 @@ function DroneController:SpawnLocalPlasmaOrb(startPos: Vector3, endPos: Vector3)
 	tween:Play()
 	tween.Completed:Connect(function()
 		if orb.Parent then
-			local blast = Instance.new("Part")
-			blast.Shape = Enum.PartType.Ball
-			blast.Size = Vector3.new(4, 4, 4)
-			blast.Material = Enum.Material.Neon
-			blast.Color = Color3.fromRGB(255, 100, 20)
-			blast.Position = endPos
-			blast.CanCollide = false
-			blast.Anchored = true
-			blast.Parent = Workspace
-			Debris:AddItem(blast, 0.28)
-
-			local twBlast = TweenService:Create(
-				blast,
-				TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Size = Vector3.new(24, 24, 24), Transparency = 1 }
-			)
-			twBlast:Play()
 			orb:Destroy()
+			local normal = hitNormal or (startPos - endPos).Unit
+			self:SpawnImpactEffects(endPos, normal, hitPart, true)
 		end
 	end)
 end
@@ -1620,6 +1763,7 @@ end
 
 -- Simula onda expansiva de pulso electromagnético local
 function DroneController:SpawnLocalEMPWave(centerPos: Vector3)
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
 	local sphere = Instance.new("Part")
 	sphere.Name = "LocalEMPWave"
 	sphere.Shape = Enum.PartType.Ball
@@ -1629,9 +1773,11 @@ function DroneController:SpawnLocalEMPWave(centerPos: Vector3)
 	sphere.Color = Color3.fromRGB(0, 255, 230)
 	sphere.Transparency = 0.4
 	sphere.CanCollide = false
+	sphere.CanQuery = false
+	sphere.CanTouch = false
 	sphere.Anchored = true
 	sphere.CastShadow = false
-	sphere.Parent = Workspace
+	sphere.Parent = fxFolder or Workspace
 
 	local tween = TweenService:Create(
 		sphere,
@@ -1659,9 +1805,9 @@ function DroneController:VentHeat()
 		return
 	end
 
-	if (self.currentHeat or 0) < 15 and not self.isWeaponOverheated then
+	if (self.currentHeat or 0) <= 0 and not self.isWeaponOverheated then
 		if self.hud and (self.hud :: any).ShowHint then
-			pcall(function() (self.hud :: any):ShowHint("NÚCLEO FRÍO: No requiere purga criogénica (<15%)", false) end)
+			pcall(function() (self.hud :: any):ShowHint("[Z] NÚCLEO FRÍO (0% CALOR) // SISTEMAS ENFRIADOS", false) end)
 		end
 		return
 	end
@@ -1669,6 +1815,10 @@ function DroneController:VentHeat()
 	self.lastVentTime = now
 	self.currentHeat = 0
 	self.isWeaponOverheated = false
+
+	if self.hud and (self.hud :: any).SetHeatDisplay then
+		pcall(function() (self.hud :: any):SetHeatDisplay(0) end)
+	end
 
 	-- Sonido criogénico de alta presión
 	local hissSfx = Instance.new("Sound")
@@ -1680,18 +1830,22 @@ function DroneController:VentHeat()
 	Debris:AddItem(hissSfx, 2)
 
 	-- Efecto visual local de chorros de vapor criogénico por los costados
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
 	local leftDir = -self.rootPart.CFrame.RightVector
 	local rightDir = self.rootPart.CFrame.RightVector
 	for _, dir in ipairs({ leftDir, rightDir }) do
 		local steam = Instance.new("Part")
+		steam.Name = "VentSteam"
 		steam.Size = Vector3.new(0.6, 0.6, 1.8)
 		steam.CFrame = CFrame.lookAt(self.rootPart.Position + dir * 1.4, self.rootPart.Position + dir * 6)
 		steam.Material = Enum.Material.Neon
 		steam.Color = Color3.fromRGB(150, 230, 255)
 		steam.Transparency = 0.2
 		steam.CanCollide = false
+		steam.CanQuery = false
+		steam.CanTouch = false
 		steam.Anchored = true
-		steam.Parent = Workspace
+		steam.Parent = fxFolder or Workspace
 		Debris:AddItem(steam, 0.35)
 
 		local tw = TweenService:Create(steam, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -1742,6 +1896,7 @@ function DroneController:DeployFlares()
 	Debris:AddItem(popSfx, 2)
 
 	-- Generación de 4 bengalas locales brillantes
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
 	local origin = self.rootPart.Position
 	local backDir = -self.rootPart.CFrame.LookVector
 	local rightDir = self.rootPart.CFrame.RightVector
@@ -1755,7 +1910,9 @@ function DroneController:DeployFlares()
 		flare.Material = Enum.Material.Neon
 		flare.Color = Color3.fromRGB(255, 170, 40)
 		flare.CanCollide = false
-		flare.Parent = Workspace
+		flare.CanQuery = false
+		flare.CanTouch = false
+		flare.Parent = fxFolder or Workspace
 		flare.AssemblyLinearVelocity = (backDir + Vector3.new(0, -0.3, 0)).Unit * math.random(35, 50) + rightDir * math.random(-12, 12)
 		Debris:AddItem(flare, 2.5)
 
@@ -1931,16 +2088,19 @@ function DroneController:FireMissile()
 end
 
 function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePart)
+	local fxFolder = Workspace:FindFirstChild("CombatFX")
 	local missile = Instance.new("Part")
 	missile.Name = "LocalSmartMissile"
 	missile.Size = Vector3.new(0.4, 0.4, 2.0)
 	missile.Material = Enum.Material.Neon
 	missile.Color = Color3.fromRGB(255, 120, 0)
 	missile.CanCollide = false
+	missile.CanQuery = false
+	missile.CanTouch = false
 	missile.CastShadow = false
 	missile.Massless = true
 	missile.CFrame = CFrame.lookAt(startPos, startPos + Vector3.new(0, 5, 0))
-	missile.Parent = Workspace
+	missile.Parent = fxFolder or Workspace
 	Debris:AddItem(missile, 3.5)
 
 	-- Estela de humo / propulsión
@@ -1981,6 +2141,7 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 			mParams.FilterType = Enum.RaycastFilterType.Exclude
 			local lp = Players.LocalPlayer
 			local mExclude = { self.rootPart, missile }
+			if fxFolder then table.insert(mExclude, fxFolder) end
 			if lp and lp.Character then table.insert(mExclude, lp.Character) end
 			mParams.FilterDescendantsInstances = mExclude
 
@@ -1990,14 +2151,17 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 				conn:Disconnect()
 				if missile.Parent then
 					local boom = Instance.new("Part")
+					boom.Name = "MissileExplosion"
 					boom.Shape = Enum.PartType.Ball
 					boom.Size = Vector3.new(9, 9, 9)
 					boom.Position = mHit.Position
 					boom.Material = Enum.Material.Neon
 					boom.Color = Color3.fromRGB(255, 120, 20)
 					boom.CanCollide = false
+					boom.CanQuery = false
+					boom.CanTouch = false
 					boom.Anchored = true
-					boom.Parent = Workspace
+					boom.Parent = fxFolder or Workspace
 					Debris:AddItem(boom, 0.2)
 					missile:Destroy()
 				end
@@ -2017,14 +2181,17 @@ function DroneController:SpawnLocalMissile(startPos: Vector3, targetPart: BasePa
 			if missile.Parent then
 				-- Destello y explosión local al alcanzar el objetivo
 				local boom = Instance.new("Part")
+				boom.Name = "MissileExplosion"
 				boom.Shape = Enum.PartType.Ball
 				boom.Size = Vector3.new(8, 8, 8)
 				boom.Position = currentTargetPos
 				boom.Material = Enum.Material.Neon
 				boom.Color = Color3.fromRGB(255, 100, 20)
 				boom.CanCollide = false
+				boom.CanQuery = false
+				boom.CanTouch = false
 				boom.Anchored = true
-				boom.Parent = Workspace
+				boom.Parent = fxFolder or Workspace
 				Debris:AddItem(boom, 0.15)
 				missile:Destroy()
 			end

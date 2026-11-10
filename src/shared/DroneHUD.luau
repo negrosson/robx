@@ -1412,6 +1412,18 @@ function DroneHUD.SetCrosshairState(
 	if self.rightBracket then self.rightBracket.TextColor3 = targetColor end
 end
 
+function DroneHUD.ApplyRecoilKick(self: HUDInstance, isCharged: boolean)
+	local kickY = if isCharged then -7 else -3
+	local kickX = math.random(-2, 2)
+	self.crosshair.Position = UDim2.new(0.5, kickX, 0.5, kickY)
+	local tw = TweenService:Create(
+		self.crosshair,
+		TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = UDim2.fromScale(0.5, 0.5) }
+	)
+	tw:Play()
+end
+
 function DroneHUD.TriggerHitmarker(self: HUDInstance, isKill: boolean)
 	local col = if isKill then Color3.fromRGB(255, 45, 45) else Color3.fromRGB(255, 255, 255)
 	local tickSize = if isKill then UDim2.fromOffset(3, 11) else UDim2.fromOffset(2, 8)
