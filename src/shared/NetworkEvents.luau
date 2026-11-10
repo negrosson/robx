@@ -23,6 +23,7 @@ NetworkEvents.Names = {
 	DeployFlares          = "DeployFlares",
 	BuyMissiles           = "BuyMissiles",
 	BuyMissilesConfirmed  = "BuyMissilesConfirmed",
+	IncomingThreatAlert   = "IncomingThreatAlert",
 }
 
 local FOLDER_NAME = "CyberNetworkEvents"

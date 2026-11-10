@@ -60,6 +60,8 @@ export type HUDInstance = {
 	hitmarkerFrame: Frame,
 	hitmarkerTicks: { Frame },
 	hitSound: Sound,
+	threatBanner: TextLabel,
+	threatStroke: UIStroke,
 }
 
 local COLOR_BG = Color3.fromRGB(8, 14, 24)
@@ -226,6 +228,33 @@ function DroneHUD.new(): HUDInstance
 	brakeIndicator.TextSize = 12
 	brakeIndicator.Visible = false
 	brakeIndicator.Parent = crosshairContainer
+
+	-- Banner de Amenaza Inminente / Telegrafiado Láser
+	local threatBanner = Instance.new("TextLabel")
+	threatBanner.Name = "IncomingThreatBanner"
+	threatBanner.Size = UDim2.fromOffset(400, 24)
+	threatBanner.AnchorPoint = Vector2.new(0.5, 0)
+	threatBanner.Position = UDim2.new(0.5, 0, 0, 68)
+	threatBanner.BackgroundColor3 = Color3.fromRGB(30, 8, 8)
+	threatBanner.BackgroundTransparency = 0.25
+	threatBanner.BorderSizePixel = 0
+	threatBanner.Font = Enum.Font.Code
+	threatBanner.Text = "⚠️ [ FIJACIÓN GAUSS DETECTADA // ¡BUSCA COBERTURA! ] ⚠️"
+	threatBanner.TextColor3 = Color3.fromRGB(255, 45, 60)
+	threatBanner.TextSize = 12
+	threatBanner.TextStrokeTransparency = 0.3
+	threatBanner.Visible = false
+	threatBanner.Parent = mainContainer
+
+	local threatCorner = Instance.new("UICorner")
+	threatCorner.CornerRadius = UDim.new(0, 4)
+	threatCorner.Parent = threatBanner
+
+	local threatStroke = Instance.new("UIStroke")
+	threatStroke.Color = Color3.fromRGB(255, 45, 60)
+	threatStroke.Thickness = 1.2
+	threatStroke.Transparency = 0.2
+	threatStroke.Parent = threatBanner
 
 	----------------------------------------------------------------------
 	-- 2. PANEL VELOCÍMETRO & MEDIDOR DE TURBO NITRO [Q]
@@ -1002,6 +1031,8 @@ function DroneHUD.new(): HUDInstance
 		hitmarkerFrame = hitmarkerFrame,
 		hitmarkerTicks = hitmarkerTicks,
 		hitSound = hitSound,
+		threatBanner = threatBanner,
+		threatStroke = threatStroke,
 	}
 
 	return setmetatable(self, DroneHUD) :: any
@@ -1557,6 +1588,35 @@ function DroneHUD.ShowHint(self: HUDInstance, message: string, isError: boolean?
 			end)
 		end
 	end)
+end
+
+function DroneHUD.SetIncomingThreatAlert(self: HUDInstance, active: boolean, threatText: string?, isCleared: boolean?)
+	if not self.threatBanner then return end
+	if active then
+		self.threatBanner.Visible = true
+		self.threatBanner.TextColor3 = Color3.fromRGB(255, 55, 65)
+		self.threatBanner.BackgroundColor3 = Color3.fromRGB(35, 10, 10)
+		self.threatBanner.Text = threatText or "⚠️ [ FIJACIÓN GAUSS DETECTADA // ¡BUSCA COBERTURA! ] ⚠️"
+		if self.threatStroke then
+			self.threatStroke.Color = Color3.fromRGB(255, 55, 65)
+		end
+	elseif isCleared then
+		self.threatBanner.Visible = true
+		self.threatBanner.TextColor3 = Color3.fromRGB(0, 255, 200)
+		self.threatBanner.BackgroundColor3 = Color3.fromRGB(8, 26, 20)
+		self.threatBanner.Text = threatText or "✓ [ FIJACIÓN ROTA // COBERTURA ASEGURADA ]"
+		if self.threatStroke then
+			self.threatStroke.Color = Color3.fromRGB(0, 255, 200)
+		end
+		local capturedText = self.threatBanner.Text
+		task.delay(1.4, function()
+			if self.threatBanner and self.threatBanner.Text == capturedText then
+				self.threatBanner.Visible = false
+			end
+		end)
+	else
+		self.threatBanner.Visible = false
+	end
 end
 
 function DroneHUD.Destroy(self: HUDInstance)

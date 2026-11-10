@@ -37,6 +37,10 @@ export type EnemySpec = {
 	creditReward    : number,
 	xpReward        : number,
 
+	-- Blindaje Táctico Avanzado
+	hasFrontalShield: boolean?,
+	shieldReduction : number?,
+
 	-- Visual
 	primaryColor    : Color3,
 	accentColor     : Color3,
@@ -153,12 +157,48 @@ local KUROSHIO_V: EnemySpec = {
 }
 
 ----------------------------------------------------------------------
+-- 4. AEGIS-BULWARK — Dron Baluarte con Escudo Direccional Hexagonal
+-- Táctica: Avance frontal protegido con escudo deflector que reduce 85% de daño frontal
+-- Debilidad: Ataques por la espalda, Disparo Cargado (splash) o Misil Guiado [R]
+----------------------------------------------------------------------
+local AEGIS_BULWARK: EnemySpec = {
+	id              = "aegis_bulwark",
+	name            = "Aegis-Bulwark Heavy Drone",
+	faction         = "División Blindada Corporativa",
+	aggressionMode  = "orbit",
+
+	maxHealth       = 240,
+	armorReduction  = 0.15,
+	hasFrontalShield = true,
+	shieldReduction = 0.85,
+
+	maxSpeed        = 42,
+	maxForce        = 380,
+	mass            = 20,
+	detectionRadius = 260,
+	detectionAngle  = 360,
+
+	orbitRadius     = 90,
+	rammingImpulse  = 0,
+	fireRange       = 140,
+	burstWeapon     = "rail_driver",
+
+	creditReward    = 180,
+	xpReward        = 130,
+
+	primaryColor    = COL_CORP,
+	accentColor     = Color3.fromRGB(0, 220, 255),  -- Cian de escudo de fuerza
+	scale           = Vector3.new(1.3, 0.75, 1.3),
+}
+
+----------------------------------------------------------------------
 -- ÍNDICE PÚBLICO
 ----------------------------------------------------------------------
 local allEnemies: { EnemySpec } = {
 	SCAV_GNATS,
 	AEGIS_44,
 	KUROSHIO_V,
+	AEGIS_BULWARK,
 }
 EnemyTypes.All = allEnemies
 

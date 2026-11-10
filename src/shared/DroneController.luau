@@ -354,6 +354,35 @@ function DroneController.new(droneEntity: Instance, customConfig: DroneConfig?)
 		end)
 	end
 
+	-- Conectar alerta diegética de amenaza inminente / telegrafiado láser
+	local onThreatAlertEv = self:GetRemoteEvent("IncomingThreatAlert")
+	if onThreatAlertEv then
+		self.threatAlertConn = onThreatAlertEv.OnClientEvent:Connect(function(alertData: any)
+			if typeof(alertData) ~= "table" then return end
+			local hudAny: any = self.hud
+			if not hudAny or not hudAny.SetIncomingThreatAlert then return end
+
+			if alertData.threatType == "cleared" then
+				local reason = if alertData.reason then "✓ [ FIJACIÓN ROTA // " .. tostring(alertData.reason):upper() .. " ]" else nil
+				hudAny:SetIncomingThreatAlert(false, reason, true)
+			elseif alertData.threatType == "sniper_laser" or alertData.threatType == "lock_on" then
+				local src = tostring(alertData.sourceName or "ENEMIGO"):upper()
+				local dist = math.round(alertData.distance or 0)
+				local msg = string.format("⚠️ [ FIJACIÓN %s (%dm) // ¡BUSCA COBERTURA! ] ⚠️", src, dist)
+				hudAny:SetIncomingThreatAlert(true, msg, false)
+
+				-- Pitido de alarma agudo en la cabina
+				local beep = Instance.new("Sound")
+				beep.SoundId = "rbxassetid://9114223170"
+				beep.Volume = 1.4
+				beep.PlaybackSpeed = 2.2
+				beep.Parent = self.rootPart
+				beep:Play()
+				Debris:AddItem(beep, 1.0)
+			end
+		end)
+	end
+
 	print("[DroneController v5] Listo!")
 	return self
 end

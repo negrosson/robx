@@ -2,7 +2,7 @@
 
 **Proyecto:** Cyber Delivery Tycoon (Roblox Luau / Rojo)  
 **Fecha de Auditoría y Corrección:** Noviembre, 2026  
-**Autor:** Nexsson1 & Antigravity AI  
+**Autor:** Nexsson1 
 
 ---
 
@@ -1195,6 +1195,34 @@ Se respetó con estricta rigurosidad la configuración previa de teclado para ev
    * Los props, barreras y cajas no ancladas reciben una fuerza de impacto direccional calculada mediante `targetPart:ApplyImpulseAtPosition(bulletDir * force, hitPos)` (45 N para plasma estándar, 140 N para orbe cargado), saliendo despedidos físicamente.
 4. **Flinch / Reacción de Impacto en Drones Hostiles:**
    * Los drones impactados reciben momento lineal directo (`AssemblyLinearVelocity += bulletDir * hitForce`) y desestabilización angular (`AssemblyAngularVelocity += randomTumble`), produciendo una respuesta de sacudida táctil contundente.
+
+---
+
+## 37. Pilar 3 (Fase 1 Focalizada): Telegrafiado Láser Pre-Disparo Gauss y Dron Baluarte con Escudo Frontal Hexagonal
+
+### 🎯 Objetivos Implementados
+1. **Sistema de Apuntado Telegrafiado Láser (*Telegraphing Laser & Lock-Warning*):**
+   * Elimina la punición instantánea del cañón Gauss de cornisa (`aegis_44` y `aegis_bulwark`), otorgando 1.05 segundos de ventana de reacción defensiva mediante un haz láser 3D visible, audio diegético y alerta en HUD.
+   * Si el jugador se zambulle detrás de un edificio, torre o helipuerto durante el telegrafiado, la línea de visión se rompe y el disparo se cancela automáticamente (`[ ✓ FIJACIÓN ROTA // COBERTURA ASEGURADA ]`).
+   * Si el jugador despliega bengalas `[T]` o impacta con EMP `[C]`, la carga se aborta inmediatamente.
+
+2. **Dron Pesado Baluarte con Escudo Direccional (*Aegis-Bulwark Heavy Drone*):**
+   * Nuevo arquetipo táctico blindado (240 HP, 180 Pelaocoins de recompensa) equipado con un escudo hexagonal frontal de energía (`ForceField`).
+   * **Mecánica de Escudo Frontal:** Los impactos directos desde el cono frontal sufren un 85% de reducción de daño y hacen parpadear el panel de fuerza emitiendo sonido de rebote.
+   * **Contramedidas y Vulnerabilidades Tácticas:**
+     * **Flanqueo:** Disparar a sus toberas y motores traseros otorga **daño crítico x1.35**.
+     * **Disparo Cargado `[LMB sostenido]`:** La detonación de área (18 studs) traspasa la barrera direccional.
+     * **Misil Guiado `[R]`:** La trayectoria parabólica Bézier ataca cenitalmente por el techo, eludiendo el panel frontal.
+     * **Pulso EMP `[C]`:** Colapsa el escudo totalmente durante la sobrecarga electromagnética.
+
+### 🛠️ Archivos Modificados
+* `src/shared/NetworkEvents.luau`: Registro del evento `IncomingThreatAlert`.
+* `src/shared/EnemyTypes.luau`: Especificación del arquetipo `AEGIS_BULWARK`.
+* `src/shared/DroneHUD.luau`: Componente visual `IncomingThreatBanner` con estados de alerta roja y despeje cian.
+* `src/shared/DroneController.luau`: Receptor de `IncomingThreatAlert` con sonido de pitido agudo de cabina.
+* `src/server/EnemyAIService.server.luau`: Rutinas de telegrafiado `handleRailDriverCharging` y ensamblaje de `FrontShield`.
+* `src/server/CombatService.server.luau`: Cálculo de ángulo vectorial de impacto (`lookVector:Dot(toSource)`) para deflexión frontal y daño crítico en la espalda.
+
 
 
 

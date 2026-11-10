@@ -13,6 +13,17 @@ local Debris            = game:GetService("Debris")
 local EnemyTypesModule = (ReplicatedStorage:FindFirstChild("EnemyTypes") or ReplicatedStorage:WaitForChild("EnemyTypes", 30)) :: ModuleScript
 local EnemyTypes = require(EnemyTypesModule)
 
+local NetworkEventsModule = (ReplicatedStorage:FindFirstChild("NetworkEvents") or ReplicatedStorage:WaitForChild("NetworkEvents", 30)) :: ModuleScript
+local NetworkEvents = require(NetworkEventsModule)
+local incomingThreatAlertEvent = NetworkEvents.Get(NetworkEvents.Names.IncomingThreatAlert)
+
+local combatFXFolder = Workspace:FindFirstChild("CombatFX")
+if not combatFXFolder then
+	combatFXFolder = Instance.new("Folder")
+	combatFXFolder.Name = "CombatFX"
+	combatFXFolder.Parent = Workspace
+end
+
 ----------------------------------------------------------------------
 -- CONSTANTES
 ----------------------------------------------------------------------
@@ -30,19 +41,23 @@ local ENEMY_FOLDER        = "EnemyDrones"
 -- TIPOS
 ----------------------------------------------------------------------
 type EnemyAgent = {
-	spec          : any,          -- EnemyTypes.EnemySpec
-	part          : BasePart,
-	health        : number,
-	velocity      : Vector3,      -- velocidad actual 3D del agente
-	targetPlayer  : Player?,
-	targetPart    : BasePart?,    -- dron objetivo del jugador
-	lastFireTime  : number,
-	lastRamTime   : number,
-	orbitAngle    : number,       -- ángulo orbital actual (rad) para Kuroshio
-	isAlive       : boolean,
-	linearVelocity: LinearVelocity,
-	alignOrient   : AlignOrientation,
-	homeCenter    : Vector3?,     -- punto de patrulla en reposo
+	spec           : any,          -- EnemyTypes.EnemySpec
+	part           : BasePart,
+	health         : number,
+	velocity       : Vector3,      -- velocidad actual 3D del agente
+	targetPlayer   : Player?,
+	targetPart     : BasePart?,    -- dron objetivo del jugador
+	lastFireTime   : number,
+	lastRamTime    : number,
+	orbitAngle     : number,       -- ángulo orbital actual (rad) para Kuroshio
+	isAlive        : boolean,
+	linearVelocity : LinearVelocity,
+	alignOrient    : AlignOrientation,
+	homeCenter     : Vector3?,     -- punto de patrulla en reposo
+	isCharging     : boolean?,
+	chargeStartTime: number?,
+	chargeDuration : number?,
+	telegraphLaser : BasePart?,
 }
 
 local activeAgents: { [BasePart]: EnemyAgent } = {}
@@ -185,6 +200,36 @@ local function buildEnemyPart(spec: any, spawnCF: CFrame): BasePart
 		laserBeam.Anchored = true
 		laserBeam.CFrame = part.CFrame * CFrame.new(0, 0, -30)
 		laserBeam.Parent = part
+	end
+
+	-- Escudo frontal hexagonal de energía si el arquetipo lo especifica (Aegis-Bulwark)
+	if spec.hasFrontalShield then
+		part:SetAttribute("HasFrontalShield", true)
+		part:SetAttribute("ShieldReduction", spec.shieldReduction or 0.85)
+
+		local shield = Instance.new("Part")
+		shield.Name = "FrontShield"
+		shield.Size = Vector3.new(part.Size.X * 1.35, part.Size.Y * 1.45, 0.35)
+		shield.Material = Enum.Material.ForceField
+		shield.Color = spec.accentColor or Color3.fromRGB(0, 220, 255)
+		shield.Transparency = 0.35
+		shield.CanCollide = false
+		shield.CanQuery = false
+		shield.CanTouch = false
+		shield.Massless = true
+		shield.CFrame = part.CFrame * CFrame.new(0, 0, -part.Size.Z * 0.55)
+		shield.Parent = part
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = part
+		weld.Part1 = shield
+		weld.Parent = part
+
+		local shieldLight = Instance.new("PointLight")
+		shieldLight.Color = shield.Color
+		shieldLight.Brightness = 3
+		shieldLight.Range = 16
+		shieldLight.Parent = shield
 	end
 
 	-- Rótulo holográfico diegético de hostilidad visible hasta 600 studs
@@ -428,11 +473,222 @@ local function handleRamming(agent: EnemyAgent)
 end
 
 ----------------------------------------------------------------------
--- LÓGICA DE IA — Disparo de torreta/interceptor con Proyectiles Visibles
+-- LÓGICA DE IA — Telegrafiado Láser Pre-Disparo & Disparo Gauss
+----------------------------------------------------------------------
+local function cleanupTelegraph(agent: EnemyAgent, reason: string?)
+	if agent.telegraphLaser and agent.telegraphLaser.Parent then
+		agent.telegraphLaser:Destroy()
+		agent.telegraphLaser = nil
+	end
+	agent.isCharging = false
+	if agent.targetPlayer and incomingThreatAlertEvent then
+		pcall(function()
+			incomingThreatAlertEvent:FireClient(agent.targetPlayer, {
+				threatType = "cleared",
+				reason = reason,
+			})
+		end)
+	end
+end
+
+local function handleRailDriverCharging(agent: EnemyAgent, now: number)
+	if not agent.targetPart or not agent.targetPart.Parent then
+		if agent.isCharging then cleanupTelegraph(agent, "Blanco perdido") end
+		return
+	end
+
+	-- Si el agente está incapacitado por EMP o desorientado por bengalas térmicas
+	if agent.part:FindFirstChild("EMPHighlight") or agent.part:FindFirstChild("FlaresConfused") then
+		if agent.isCharging then cleanupTelegraph(agent, "Amenaza neutralizada") end
+		return
+	end
+
+	local dist = (agent.part.Position - agent.targetPart.Position).Magnitude
+	if dist > agent.spec.fireRange then
+		if agent.isCharging then cleanupTelegraph(agent, "Fuera de alcance") end
+		return
+	end
+
+	-- Verificar línea de visión estricta contra torres, pilares y estructuras sólidas
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local mExclude: { Instance } = { agent.part, agentFolder, combatFXFolder }
+	params.FilterDescendantsInstances = mExclude
+
+	local direction = agent.targetPart.Position - agent.part.Position
+	local result = Workspace:Raycast(agent.part.Position, direction, params)
+
+	local hasLOS = false
+	if not result then
+		hasLOS = true
+	elseif result.Instance == agent.targetPart or result.Instance:IsDescendantOf(agent.targetPart) then
+		hasLOS = true
+	elseif agent.targetPlayer and agent.targetPlayer.Character and result.Instance:IsDescendantOf(agent.targetPlayer.Character) then
+		hasLOS = true
+	end
+
+	-- FASE 1: Iniciar carga si no está cargando
+	if not agent.isCharging then
+		if now - agent.lastFireTime < TURRET_FIRE_RATE then return end
+		if not hasLOS then return end
+
+		agent.isCharging = true
+		agent.chargeStartTime = now
+		agent.chargeDuration = 1.05
+
+		-- Haz láser de telegrafiado fino rojo en 3D
+		local laser = Instance.new("Part")
+		laser.Name = "TelegraphLaser"
+		laser.Size = Vector3.new(0.14, 0.14, dist)
+		laser.Material = Enum.Material.Neon
+		laser.Color = Color3.fromRGB(255, 35, 35)
+		laser.Transparency = 0.45
+		laser.CanCollide = false
+		laser.CanQuery = false
+		laser.CanTouch = false
+		laser.Anchored = true
+		laser.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
+		laser.Parent = combatFXFolder
+		agent.telegraphLaser = laser
+
+		-- Sonido diegético de carga inminente
+		local chargeSfx = Instance.new("Sound")
+		chargeSfx.SoundId = "rbxassetid://9114223170"
+		chargeSfx.Volume = 1.5
+		chargeSfx.PlaybackSpeed = 1.65
+		chargeSfx.RollOffMaxDistance = 260
+		chargeSfx.Parent = agent.part
+		chargeSfx:Play()
+		Debris:AddItem(chargeSfx, 1.2)
+
+		-- Notificar al HUD del jugador fijado
+		if agent.targetPlayer and incomingThreatAlertEvent then
+			pcall(function()
+				incomingThreatAlertEvent:FireClient(agent.targetPlayer, {
+					threatType = "sniper_laser",
+					sourceName = agent.spec.name,
+					distance = dist,
+					duration = agent.chargeDuration,
+				})
+			end)
+		end
+		return
+	end
+
+	-- FASE 2: Si ya estaba cargando, verificar si rompió línea de visión
+	if not hasLOS then
+		-- ¡El jugador se cubrió detrás de un edificio o helipuerto! Rompió la fijación
+		cleanupTelegraph(agent, "Cobertura asegurada")
+		return
+	end
+
+	local elapsed = now - (agent.chargeStartTime or now)
+	local duration = agent.chargeDuration or 1.05
+	local progress = math.clamp(elapsed / duration, 0, 1)
+
+	-- Actualizar haz de seguimiento y grosor/brillo en tiempo real
+	if agent.telegraphLaser and agent.telegraphLaser.Parent then
+		local curDist = (agent.part.Position - agent.targetPart.Position).Magnitude
+		agent.telegraphLaser.Size = Vector3.new(0.14 + progress * 0.22, 0.14 + progress * 0.22, curDist)
+		agent.telegraphLaser.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -curDist / 2)
+		agent.telegraphLaser.Transparency = 0.45 - progress * 0.35
+		if progress > 0.72 and math.random() > 0.5 then
+			agent.telegraphLaser.Color = Color3.fromRGB(255, 255, 255)
+		else
+			agent.telegraphLaser.Color = Color3.fromRGB(255, 35, 35)
+		end
+	end
+
+	-- FASE 3: Completó la carga (1.05s transcurridos sin cobertura) → DISPARO GAUSS REAL
+	if progress >= 1.0 then
+		cleanupTelegraph(agent, nil)
+		agent.lastFireTime = now
+
+		-- SFX disparo pesado Gauss
+		local railSound = Instance.new("Sound")
+		railSound.SoundId = "rbxassetid://9114223400"
+		railSound.Volume = 2.4
+		railSound.PlaybackSpeed = 0.92
+		railSound.RollOffMaxDistance = 340
+		railSound.Parent = agent.part
+		railSound:Play()
+		Debris:AddItem(railSound, 2.5)
+
+		-- Muzzle Flash
+		local muzzlePos = agent.part.CFrame * CFrame.new(0, 0, -3.2)
+		local muzzleFlare = Instance.new("Part")
+		muzzleFlare.Shape = Enum.PartType.Ball
+		muzzleFlare.Size = Vector3.new(3.2, 3.2, 3.2)
+		muzzleFlare.Position = muzzlePos.Position
+		muzzleFlare.Material = Enum.Material.Neon
+		muzzleFlare.Color = Color3.fromRGB(255, 220, 100)
+		muzzleFlare.Anchored = true
+		muzzleFlare.CanCollide = false
+		muzzleFlare.CanQuery = false
+		muzzleFlare.CanTouch = false
+		muzzleFlare.Parent = combatFXFolder
+		Debris:AddItem(muzzleFlare, 0.12)
+
+		-- Trazador Gauss cinético de alta energía
+		local curDist = (agent.part.Position - agent.targetPart.Position).Magnitude
+		local tracer = Instance.new("Part")
+		tracer.Name = "GaussTracer"
+		tracer.Size = Vector3.new(0.85, 0.85, curDist)
+		tracer.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -curDist / 2)
+		tracer.Anchored = true
+		tracer.CanCollide = false
+		tracer.CanQuery = false
+		tracer.CanTouch = false
+		tracer.Material = Enum.Material.Neon
+		tracer.Color = Color3.fromRGB(255, 170, 0)
+		tracer.Transparency = 0.05
+		tracer.Parent = combatFXFolder
+		Debris:AddItem(tracer, 0.20)
+
+		-- Núcleo incandescente
+		local tracerCore = Instance.new("Part")
+		tracerCore.Size = Vector3.new(0.35, 0.35, curDist)
+		tracerCore.CFrame = tracer.CFrame
+		tracerCore.Anchored = true
+		tracerCore.CanCollide = false
+		tracerCore.CanQuery = false
+		tracerCore.CanTouch = false
+		tracerCore.Material = Enum.Material.Neon
+		tracerCore.Color = Color3.fromRGB(255, 255, 230)
+		tracerCore.Parent = combatFXFolder
+		Debris:AddItem(tracerCore, 0.18)
+
+		-- Impacto cinético en el dron del jugador
+		agent.targetPart.AssemblyLinearVelocity += direction.Unit * 34
+
+		local dmg = if agent.spec.id == "aegis_bulwark" then 26 else 22
+		if _G.CombatService and _G.CombatService.ApplyDamage then
+			_G.CombatService.ApplyDamage(agent.targetPart, dmg, { name = agent.spec.name }, nil, agent.part.Position)
+		end
+		print(string.format("[EnemyAIService] %s detonó Rail-Driver Gauss (-%d HP | 34 N)", agent.spec.name, dmg))
+	end
+end
+
+----------------------------------------------------------------------
+-- LÓGICA DE IA — Disparo general de torreta/interceptor con Proyectiles Visibles
 ----------------------------------------------------------------------
 local function handleFiring(agent: EnemyAgent)
-	if agent.spec.burstWeapon == "" or not agent.targetPart then return end
+	if agent.spec.burstWeapon == "" or not agent.targetPart then
+		if agent.isCharging then
+			cleanupTelegraph(agent, "Blanco perdido")
+		end
+		return
+	end
+
 	local now = os.clock()
+
+	-- Armas con telegrafiado de disparo pesado (Gauss Rail-Driver)
+	if agent.spec.burstWeapon == "rail_driver" then
+		handleRailDriverCharging(agent, now)
+		return
+	end
+
+	-- Armas estándar (Microondas continuas de Kuroshio-V)
 	if now - agent.lastFireTime < TURRET_FIRE_RATE then return end
 
 	local dist = (agent.part.Position - agent.targetPart.Position).Magnitude
@@ -441,7 +697,8 @@ local function handleFiring(agent: EnemyAgent)
 	-- Verificar línea de visión estricta contra torres, pilares y estructuras sólidas
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { agent.part, agentFolder }
+	local mExclude: { Instance } = { agent.part, agentFolder, combatFXFolder }
+	params.FilterDescendantsInstances = mExclude
 
 	local direction = agent.targetPart.Position - agent.part.Position
 	local result = Workspace:Raycast(agent.part.Position, direction, params)
@@ -460,9 +717,8 @@ local function handleFiring(agent: EnemyAgent)
 
 	agent.lastFireTime = now
 
-	-- Delegar daño al CombatService y renderizar proyectil visual
+	-- Kuroshio-V: Haz dual de microondas ionizadas violeta/cian con audio
 	if agent.spec.burstWeapon == "synapse_overheat" then
-		-- Kuroshio-V: Haz dual de microondas ionizadas violeta/cian con audio
 		local humSound = Instance.new("Sound")
 		humSound.SoundId = "rbxassetid://9114223170"
 		humSound.Volume = 1.5
@@ -479,10 +735,12 @@ local function handleFiring(agent: EnemyAgent)
 		pulse.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
 		pulse.Anchored = true
 		pulse.CanCollide = false
+		pulse.CanQuery = false
+		pulse.CanTouch = false
 		pulse.Material = Enum.Material.Neon
 		pulse.Color = Color3.fromRGB(180, 0, 255)
 		pulse.Transparency = 0.25
-		pulse.Parent = Workspace
+		pulse.Parent = combatFXFolder
 		Debris:AddItem(pulse, 0.22)
 
 		-- Núcleo interior cian brillante
@@ -492,10 +750,12 @@ local function handleFiring(agent: EnemyAgent)
 		core.CFrame = pulse.CFrame
 		core.Anchored = true
 		core.CanCollide = false
+		core.CanQuery = false
+		core.CanTouch = false
 		core.Material = Enum.Material.Neon
 		core.Color = Color3.fromRGB(0, 240, 255)
 		core.Transparency = 0.05
-		core.Parent = Workspace
+		core.Parent = combatFXFolder
 		Debris:AddItem(core, 0.20)
 
 		-- Chispas electromagnéticas en la posición del objetivo
@@ -505,7 +765,9 @@ local function handleFiring(agent: EnemyAgent)
 		sparkPart.Transparency = 1
 		sparkPart.Anchored = true
 		sparkPart.CanCollide = false
-		sparkPart.Parent = Workspace
+		sparkPart.CanQuery = false
+		sparkPart.CanTouch = false
+		sparkPart.Parent = combatFXFolder
 		local pe = Instance.new("ParticleEmitter")
 		pe.Color = ColorSequence.new(Color3.fromRGB(200, 50, 255))
 		pe.Size = NumberSequence.new(0.4, 0)
@@ -523,62 +785,6 @@ local function handleFiring(agent: EnemyAgent)
 			_G.CombatService.ApplyDamage(agent.targetPart, 8, { name = "Microondas Kuroshio-V" }, nil, agent.part.Position)
 		end
 		print(string.format("[EnemyAIService] %s descargó microondas (+16 calor | -8 HP)", agent.spec.name))
-
-	elseif agent.spec.burstWeapon == "rail_driver" then
-		-- Aegis-44: Cañón Gauss Cinético de Cornisa con Muzzle Flash, SFX pesado y retroceso
-		local railSound = Instance.new("Sound")
-		railSound.SoundId = "rbxassetid://9114223400"
-		railSound.Volume = 2.2
-		railSound.PlaybackSpeed = 0.92
-		railSound.RollOffMaxDistance = 320
-		railSound.Parent = agent.part
-		railSound:Play()
-		Debris:AddItem(railSound, 2.5)
-
-		-- Muzzle Flash y destello expansivo en el cañón
-		local muzzlePos = agent.part.CFrame * CFrame.new(0, 0, -3.2)
-		local muzzleFlare = Instance.new("Part")
-		muzzleFlare.Shape = Enum.PartType.Ball
-		muzzleFlare.Size = Vector3.new(2.8, 2.8, 2.8)
-		muzzleFlare.Position = muzzlePos.Position
-		muzzleFlare.Material = Enum.Material.Neon
-		muzzleFlare.Color = Color3.fromRGB(255, 220, 100)
-		muzzleFlare.Anchored = true
-		muzzleFlare.CanCollide = false
-		muzzleFlare.Parent = Workspace
-		Debris:AddItem(muzzleFlare, 0.12)
-
-		-- Trazador Gauss cinético de alta energía
-		local tracer = Instance.new("Part")
-		tracer.Name = "GaussTracer"
-		tracer.Size = Vector3.new(0.75, 0.75, dist)
-		tracer.CFrame = CFrame.lookAt(agent.part.Position, agent.targetPart.Position) * CFrame.new(0, 0, -dist / 2)
-		tracer.Anchored = true
-		tracer.CanCollide = false
-		tracer.Material = Enum.Material.Neon
-		tracer.Color = Color3.fromRGB(255, 170, 0)
-		tracer.Transparency = 0.1
-		tracer.Parent = Workspace
-		Debris:AddItem(tracer, 0.18)
-
-		-- Núcleo del trazador blanco incandescente
-		local tracerCore = Instance.new("Part")
-		tracerCore.Size = Vector3.new(0.3, 0.3, dist)
-		tracerCore.CFrame = tracer.CFrame
-		tracerCore.Anchored = true
-		tracerCore.CanCollide = false
-		tracerCore.Material = Enum.Material.Neon
-		tracerCore.Color = Color3.fromRGB(255, 255, 220)
-		tracerCore.Parent = Workspace
-		Debris:AddItem(tracerCore, 0.16)
-
-		-- Impacto cinético en el dron del jugador
-		agent.targetPart.AssemblyLinearVelocity += direction.Unit * 32
-
-		if _G.CombatService and _G.CombatService.ApplyDamage then
-			_G.CombatService.ApplyDamage(agent.targetPart, 22, { name = "Torreta Gauss Aegis-44" }, nil, agent.part.Position)
-		end
-		print(string.format("[EnemyAIService] %s detonó Rail-Driver Gauss (-22 HP | 32 N)", agent.spec.name))
 	end
 end
 
@@ -603,12 +809,16 @@ RunService.Heartbeat:Connect(function(dt: number)
 	for part, agent in pairs(activeAgents) do
 		-- Verificar existencia
 		if not part or not part.Parent or not agent.isAlive then
+			cleanupTelegraph(agent)
 			activeAgents[part] = nil
 			continue
 		end
 
 		-- Si está aturdido por EMP, deshabilitar motores y aplicar caída física con giro
 		if part:FindFirstChild("EMPHighlight") then
+			if agent.isCharging then
+				cleanupTelegraph(agent, "Amenaza neutralizada")
+			end
 			agent.velocity = Vector3.new(agent.velocity.X * 0.85, -45, agent.velocity.Z * 0.85)
 			part.AssemblyLinearVelocity = agent.velocity
 			part.CFrame = part.CFrame * CFrame.Angles(math.rad(AI_TICK_RATE * 90), math.rad(AI_TICK_RATE * 60), 0)
@@ -617,6 +827,9 @@ RunService.Heartbeat:Connect(function(dt: number)
 
 		-- Si fue desorientado por bengalas térmicas, romper objetivo y evadir
 		if part:FindFirstChild("FlaresConfused") then
+			if agent.isCharging then
+				cleanupTelegraph(agent, "Fijación perdida")
+			end
 			agent.targetPlayer = nil
 			agent.targetPart   = nil
 			local steerForce   = (part.CFrame.LookVector + Vector3.new(0, 0.3, 0)).Unit * agent.spec.maxSpeed
@@ -864,10 +1077,12 @@ local threatZones: { [string]: ThreatZone } = {
 		respawnCooldown = 45,
 		lastClearedTime = 0,
 		archetypes = {
-			-- Torreta Aegis asentada firmemente sobre la cornisa de la azotea de Torre B (Y = 52.5)
-			{ specId = "aegis_44",  offset = Vector3.new(14, 2.5, 14), difficulty = 0.25 },
+			-- Torreta Aegis asentada firmemente sobre la cornisa de la azotea de Torre B (Y = 52.5) con telegrafiado láser
+			{ specId = "aegis_44",       offset = Vector3.new(14, 2.5, 14), difficulty = 0.25 },
 			-- Interceptor orbital Kuroshio patrullando en órbita alta (Y = 78)
-			{ specId = "kuroshio_v", offset = Vector3.new(-15, 28, 15), difficulty = 0.35 },
+			{ specId = "kuroshio_v",     offset = Vector3.new(-15, 28, 15), difficulty = 0.35 },
+			-- Dron pesado Baluarte con Escudo Frontal Hexagonal de Energía (Aegis-Bulwark)
+			{ specId = "aegis_bulwark",  offset = Vector3.new(22, 16, -22), difficulty = 0.30 },
 		},
 		activeParts = {},
 		isActive = false,
@@ -901,6 +1116,8 @@ local function deactivateZone(zone: ThreatZone)
 
 	for _, part in ipairs(zone.activeParts) do
 		if part and part.Parent then
+			local agent = activeAgents[part]
+			if agent then cleanupTelegraph(agent) end
 			activeAgents[part] = nil
 			if _G.CombatService and _G.CombatService.Unregister then
 				_G.CombatService.Unregister(part)

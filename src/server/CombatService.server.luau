@@ -253,6 +253,8 @@ local function destroyDrone(state: DroneState, killerPlayer: Player?)
 					bounty = 80
 				elseif string.find(part.Name, "kuroshio_v") then
 					bounty = 120
+				elseif string.find(part.Name, "aegis_bulwark") then
+					bounty = 180
 				else
 					bounty = 35
 				end
@@ -326,8 +328,51 @@ local function applyDamage(state: DroneState, rawDamage: number, weaponSpec: any
 		state.lastAttacker = attackerPlayer
 	end
 
+	local effectiveRawDamage = rawDamage
 	local mitigation = math.clamp(state.armorReduction, 0, 0.90)
-	local finalDmg = math.max(1, rawDamage * (1 - mitigation))
+
+	-- Mecánica de Escudo Frontal Hexagonal Deflector (Aegis-Bulwark)
+	if state.part and state.part:GetAttribute("HasFrontalShield") and sourcePos then
+		-- Si el dron está bajo EMP, el escudo está totalmente colapsado
+		if not state.isEMPed then
+			local toSource = (sourcePos - state.part.Position).Unit
+			local lookVec = state.part.CFrame.LookVector
+			local dot = lookVec:Dot(toSource)
+			local isPenetrating = weaponSpec and (weaponSpec.id == "charged_plasma_blast" or weaponSpec.id == "smart_gyro_lock")
+
+			if dot > 0.35 and not isPenetrating then
+				-- Impacto frontal: el escudo desvía el 85% del daño
+				local shieldRed = (state.part:GetAttribute("ShieldReduction") :: number?) or 0.85
+				mitigation = math.max(mitigation, shieldRed)
+
+				-- Destello del escudo
+				local shield = state.part:FindFirstChild("FrontShield") :: BasePart?
+				if shield then
+					task.spawn(function()
+						shield.Transparency = 0.05
+						task.wait(0.12)
+						if shield and shield.Parent then
+							shield.Transparency = 0.35
+						end
+					end)
+				end
+
+				-- Sonido de deflexión
+				local deflectSfx = Instance.new("Sound")
+				deflectSfx.SoundId = "rbxassetid://9114223170"
+				deflectSfx.Volume = 1.3
+				deflectSfx.PlaybackSpeed = 1.9
+				deflectSfx.Parent = state.part
+				deflectSfx:Play()
+				Debris:AddItem(deflectSfx, 1.5)
+			elseif dot < -0.35 then
+				-- ¡IMPACTO CRÍTICO POR LA ESPALDA! (Flanqueo exitoso)
+				effectiveRawDamage = rawDamage * 1.35
+			end
+		end
+	end
+
+	local finalDmg = math.max(1, effectiveRawDamage * (1 - mitigation))
 	state.health = math.max(0, state.health - finalDmg)
 
 	-- Notificar al dueño del dron con posición del atacante para HUD direccional
